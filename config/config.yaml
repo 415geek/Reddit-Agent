@@ -1,0 +1,99 @@
+monitoring:
+  interval_minutes: 5
+  subreddits:
+    - restaurateur
+    - restaurantowners
+    - restaurant
+    - smallbusiness
+    - foodtrucks
+    - bubbletea
+    - entrepreneur
+  keywords:
+    - menusifu
+    - menu sifu
+    - toast pos
+    - square pos
+    - clover pos
+    - restaurant pos
+    - delivery integration
+    - doordash integration
+    - ubereats integration
+    - chinese restaurant pos
+    - bubble tea pos
+    - chowbus
+    - restosuite
+    - pos system
+    - point of sale
+  post_limit: 25
+  comment_limit: 50
+
+competitors:
+  primary:
+    - name: MenuSifu
+      keywords: ["menusifu", "menu sifu", "menu-sifu"]
+    - name: Toast
+      keywords: ["toast pos", "toasttab"]
+    - name: Square
+      keywords: ["square pos", "square for restaurants"]
+    - name: Clover
+      keywords: ["clover pos", "clover network"]
+    - name: Chowbus
+      keywords: ["chowbus", "chowbus pos"]
+  secondary:
+    - name: SpotOn
+      keywords: ["spoton", "spot on pos"]
+    - name: Revel
+      keywords: ["revel pos", "revel systems"]
+    - name: Lightspeed
+      keywords: ["lightspeed pos", "lightspeed restaurant"]
+    - name: Owner.com
+      keywords: ["owner.com", "owner pos"]
+    - name: Popmenu
+      keywords: ["popmenu", "pop menu"]
+
+scoring:
+  model: qwen3:8b
+  categories:
+    - Competitor Complaint
+    - POS Shopping Intent
+    - New Restaurant Opening
+    - Technology Discussion
+    - General Discussion
+  high_priority:
+    - Competitor Complaint
+    - POS Shopping Intent
+    - New Restaurant Opening
+  min_score_for_alert: 6
+  min_lead_score_for_alert: 5
+
+reply_generation:
+  styles:
+    - professional
+    - friendly
+    - educational
+  max_length: 500
+  avoid_direct_promotion: true
+
+post_generation:
+  weekly_schedule:
+    day: monday
+    hour: 9
+  topics:
+    - Industry insights
+    - Restaurant technology discussions
+    - POS migration tips
+    - Delivery optimization guides
+    - Restaurant operations best practices
+
+telegram:
+  max_message_length: 4096
+  notification_cooldown_minutes: 30
+
+database:
+  path: data/reddit_agent.db
+  backup_interval_hours: 24
+
+ollama:
+  host: http://localhost:11434
+  timeout: 120
+  fallback_model: llama3.2:3b

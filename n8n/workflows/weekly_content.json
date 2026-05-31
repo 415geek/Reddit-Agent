@@ -1,0 +1,59 @@
+{
+  "name": "Weekly Content Generation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [1],
+              "triggerAtHour": 9,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "name": "Every Monday 9am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "command": "cd /opt/reddit-agent && python -c \"\nfrom src.agents.post_generator import PostGenerator\nfrom src.utils.logger import setup_logger\nimport yaml\nsetup_logger()\ncfg = yaml.safe_load(open('config/config.yaml'))\ng = PostGenerator(cfg)\nposts = g.generate_weekly_batch()\nprint(f'Generated {len(posts)} posts for review')\n\""
+      },
+      "name": "Generate Weekly Posts",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "{{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "📝 *Weekly Content Generated*\n\nNew posts are ready for review.\nUse /posts in the bot to see them.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "name": "Notify via Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [680, 300],
+      "credentials": {
+        "telegramApi": { "id": "1", "name": "Telegram Bot" }
+      }
+    }
+  ],
+  "connections": {
+    "Every Monday 9am": {
+      "main": [[ { "node": "Generate Weekly Posts", "type": "main", "index": 0 } ]]
+    },
+    "Generate Weekly Posts": {
+      "main": [[ { "node": "Notify via Telegram", "type": "main", "index": 0 } ]]
+    }
+  },
+  "active": true,
+  "settings": {},
+  "tags": ["content", "weekly", "restaurant"]
+}

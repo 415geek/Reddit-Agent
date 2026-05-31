@@ -1,0 +1,75 @@
+{
+  "name": "Telegram Approval Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message", "callback_query"],
+        "additionalFields": {}
+      },
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": {
+        "telegramApi": { "id": "1", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.callback_query.data }}",
+              "operation": "startsWith",
+              "value2": "approve_reply"
+            }
+          ]
+        }
+      },
+      "name": "Is Approve Reply?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "command": "cd /opt/reddit-agent && python -c \"\nimport sys\nfrom src.database.db import get_db\nfrom src.database.models import GeneratedReply, ApprovalStatus\nreply_id = int('{{ $json.callback_query.data }}'.split(':')[1])\nwith get_db() as session:\n    r = session.query(GeneratedReply).get(reply_id)\n    if r: r.approval_status = ApprovalStatus.APPROVED\nprint(f'Reply {reply_id} approved')\n\""
+      },
+      "name": "Approve Reply in DB",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.callback_query.message.chat.id }}",
+        "text": "✅ Reply approved! Post URL saved in dashboard for manual publishing.",
+        "additionalFields": {}
+      },
+      "name": "Confirm Approval",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [900, 200],
+      "credentials": {
+        "telegramApi": { "id": "1", "name": "Telegram Bot" }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [[ { "node": "Is Approve Reply?", "type": "main", "index": 0 } ]]
+    },
+    "Is Approve Reply?": {
+      "main": [
+        [ { "node": "Approve Reply in DB", "type": "main", "index": 0 } ],
+        []
+      ]
+    },
+    "Approve Reply in DB": {
+      "main": [[ { "node": "Confirm Approval", "type": "main", "index": 0 } ]]
+    }
+  },
+  "active": true,
+  "settings": {},
+  "tags": ["telegram", "approval", "restaurant"]
+}
