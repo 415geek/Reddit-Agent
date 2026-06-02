@@ -1,237 +1,356 @@
-# Restaurant Competitive Intelligence Agent
+# MarketVoice
 
-A self-hosted AI agent system that monitors Reddit for restaurant technology discussions, POS system mentions, competitor activity, and sales opportunities — with human-approved Telegram workflows and a Streamlit dashboard.
+Reddit + AI powered **Restaurant POS Market Intelligence Dashboard**.
 
-## Features
+Monitors Reddit RSS feeds across national restaurant communities and major U.S. city subreddits, detects discussions related to POS systems, payment processing, online ordering, and competitor complaints, then uses AI to score leads and display them in a dashboard.
 
-- **Reddit Monitoring** — Scans 7 subreddits every 5 minutes for keyword matches
-- **AI Opportunity Scoring** — Local LLM (Ollama/Qwen3) scores every post 0-10 across 5 categories
-- **Lead Detection** — Identifies restaurant owners, POS shoppers, and new restaurant openings
-- **AI Reply Generator** — 3 reply styles (Professional, Friendly, Educational) per opportunity
-- **AI Post Generator** — Weekly content batch (industry insights, POS tips, delivery guides)
-- **Telegram Approval** — All publishing requires human approval via Telegram bot
-- **Streamlit Dashboard** — Web UI for all data, leads, replies, and analytics
-- **n8n Workflows** — Optional workflow engine for scheduling and Telegram integration
-- **Docker Ready** — Runs on Ubuntu, Jetson Orin 64GB, and Linux VPS
+**Live dashboard:** `https://voice.restaurantiq.ai`
+
+---
 
 ## Quick Start
 
-### Option A: Native Python
+### 1. Clone and configure
 
 ```bash
-# Clone and setup
-git clone <repo-url>
-cd Reddit-Agent
-bash scripts/setup.sh
-
-# Configure credentials
+git clone https://github.com/415geek/Reddit-Agent.git /opt/marketvoice/app
+cd /opt/marketvoice/app
 cp .env.example .env
-nano .env   # Add Reddit API + Telegram credentials
-
-# Start
-source venv/bin/activate
-python main.py
-
-# Dashboard (separate terminal)
-source venv/bin/activate
-streamlit run src/dashboard/app.py
+nano .env   # Fill in credentials (see Configuration below)
 ```
 
-### Option B: Docker Compose
+### 2. Start services
 
 ```bash
-cp .env.example .env
-nano .env   # Add credentials
-bash scripts/start_docker.sh
+docker compose up -d
 ```
 
-### Option C: n8n Workflow Engine
+### 3. Run migrations and seed sources
 
 ```bash
-bash scripts/start_docker.sh
-# Open http://localhost:5678
-# Import workflows from n8n/workflows/
+docker compose exec marketvoice-app npx prisma migrate deploy
+docker compose exec marketvoice-app npx prisma db seed
 ```
+
+### 4. Access dashboard
+
+```
+http://<your-server-ip>:3031
+```
+
+---
+
+## How to Start / Stop / Restart
+
+```bash
+# Start all
+docker compose up -d
+
+# Stop all (does NOT delete data)
+docker compose down
+
+# Restart app only
+docker compose restart marketvoice-app
+
+# View logs
+docker compose logs -f marketvoice-app
+
+# View all logs
+docker compose logs -f
+```
+
+---
 
 ## Configuration
 
-### Reddit API Credentials
+Edit `/opt/marketvoice/app/.env`:
 
-1. Go to https://www.reddit.com/prefs/apps
-2. Create a new "script" app
-3. Copy `client_id` and `client_secret` to `.env`
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `POSTGRES_PASSWORD` | Database password (must match DATABASE_URL) |
+| `MARKETVOICE_ADMIN_USER` | Dashboard login username |
+| `MARKETVOICE_ADMIN_PASSWORD` | Dashboard login password |
+| `JWT_SECRET` | Secret for session tokens (min 32 chars) |
+| `OPENAI_API_KEY` | OpenAI API key for AI analysis |
+| `ANTHROPIC_API_KEY` | Anthropic API key (alternative to OpenAI) |
+| `AI_PROVIDER` | `openai` or `anthropic` |
+| `N8N_WEBHOOK_SECRET` | Secret for n8n → app webhook |
+| `N8N_INGEST_URL` | URL for n8n to POST analyzed posts |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot (optional) |
+| `TELEGRAM_CHAT_ID` | Telegram chat ID (optional) |
 
-### Telegram Bot
+Generate strong secrets:
+```bash
+openssl rand -base64 32
+```
 
-1. Message @BotFather → `/newbot`
-2. Copy the bot token to `.env`
-3. Get your chat ID from @userinfobot → set `TELEGRAM_CHAT_ID`
+---
 
-### Ollama / Local LLM
+## AI API Key Setup
+
+### OpenAI
+```env
+AI_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+```
+
+### Anthropic
+```env
+AI_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+---
+
+## Telegram Notifications (Optional)
+
+1. Create bot via @BotFather → get token
+2. Get your chat ID via @userinfobot
+3. Set in `.env`:
+```env
+TELEGRAM_BOT_TOKEN=your_token
+TELEGRAM_CHAT_ID=your_chat_id
+```
+4. Restart: `docker compose restart marketvoice-app`
+
+---
+
+## Database Migrations
 
 ```bash
-# Install Ollama
-bash scripts/install_ollama.sh
+# Run pending migrations
+docker compose exec marketvoice-app npx prisma migrate deploy
 
-# Pull recommended model
-ollama pull qwen3:8b
+# Reset database (DESTRUCTIVE — deletes all data)
+docker compose exec marketvoice-app npx prisma migrate reset
 
-# Alternative lighter models
-ollama pull llama3.2:3b
-ollama pull deepseek-r1:7b
+# Open Prisma Studio (GUI)
+docker compose exec marketvoice-app npx prisma studio
 ```
 
-## Architecture
+---
 
-```
-Reddit API
-    │
-    ▼
-RedditMonitor (every 5 min)
-    │  ← Collects posts + comments matching keywords
-    ▼
-AIScorer (Ollama/Qwen3)
-    │  ← Scores 0-10, categorizes, detects competitors
-    ▼
-LeadDetector
-    │  ← Identifies restaurant owners, POS shoppers
-    ▼
-ReplyGenerator (3 styles)
-    │  ← Professional / Friendly / Educational drafts
-    ▼
-Telegram Bot
-    │  ← Sends alerts with Approve/Edit/Skip buttons
-    ▼
-Human Approval
-    │
-    ▼
-Streamlit Dashboard
-    └── Overview / Opportunities / Competitors / Leads / Replies / Posts
-```
+## Seed Reddit Sources
 
-## Monitored Subreddits
-
-- r/restaurateur
-- r/restaurantowners
-- r/restaurant
-- r/smallbusiness
-- r/foodtrucks
-- r/bubbletea
-- r/entrepreneur
-
-## Tracked Keywords
-
-`menusifu`, `menu sifu`, `toast pos`, `square pos`, `clover pos`, `restaurant pos`, `delivery integration`, `doordash integration`, `ubereats integration`, `chinese restaurant pos`, `bubble tea pos`
-
-## Competitors Tracked
-
-**Primary:** MenuSifu, Toast, Square, Clover, Chowbus POS  
-**Secondary:** SpotOn, Revel, Lightspeed, Owner.com, Popmenu
-
-## Telegram Commands
-
-| Command | Description |
-|---------|-------------|
-| `/summary` | Daily summary |
-| `/top` | Top 5 opportunities |
-| `/leads` | Recent lead list |
-| `/competitors` | Competitor mention report |
-| `/stats` | System statistics |
-| `/posts` | Generated content drafts |
-
-## Dashboard Pages
-
-- **Overview** — Metrics, recent opportunities, competitor chart
-- **Opportunities** — Filterable opportunity list with scoring
-- **Competitor Mentions** — Charts and trend analysis
-- **Leads** — Lead list with type classification
-- **Generated Replies** — Review replies by style and status
-- **Generated Posts** — Weekly content drafts
-- **Publishing History** — Approved/published content log
-
-## Deployment
-
-### Ubuntu VPS
+The seed file adds all 28 default subreddits (5 national + 23 cities).
 
 ```bash
-# System dependencies
-sudo apt update && sudo apt install -y python3 python3-pip python3-venv curl git
-bash scripts/setup.sh
+docker compose exec marketvoice-app npx prisma db seed
 ```
 
-### Jetson Orin 64GB
+---
+
+## Add New Subreddit
+
+Insert directly into the database:
+
+```sql
+INSERT INTO marketvoice_sources 
+  (id, "sourceName", subreddit, "rssUrl", city, state, region, "sourceType", priority, active, "createdAt", "updatedAt")
+VALUES 
+  ('portland-food', 'Portland Food', 'portlandfood', 'https://www.reddit.com/r/portlandfood/new/.rss', 
+   'Portland', 'OR', 'West', 'city', 6, true, NOW(), NOW());
+```
+
+Or via Prisma Studio:
+```bash
+docker compose exec marketvoice-app npx prisma studio
+```
+
+---
+
+## Modify Keyword List
+
+Edit the n8n workflow node "Keyword Pre-Filter" directly in the n8n UI at `http://<server>:5678`.
+
+Or modify the keyword array in the n8n workflow JSON at `n8n/marketvoice-workflow.json` and re-import.
+
+---
+
+## n8n Workflow Setup
+
+1. Open n8n: `http://<server>:5678`
+2. Import workflow: `n8n/marketvoice-workflow.json`
+3. Configure credentials:
+   - PostgreSQL: host=`marketvoice-postgres`, db=`marketvoice`, user=`marketvoice_user`
+   - OpenAI API key
+4. Set environment variables in n8n:
+   - `N8N_INGEST_URL` = `https://voice.restaurantiq.ai/api/ingest`
+   - `N8N_WEBHOOK_SECRET` = (same as in `.env`)
+5. Activate the workflow
+
+---
+
+## Nginx Setup
+
+### Install Nginx config
 
 ```bash
-# Jetson has ARM64 + CUDA — use native install
-bash scripts/setup.sh
-# Ollama supports ARM64 natively
+sudo cp nginx/marketvoice.conf /etc/nginx/sites-available/marketvoice.conf
+sudo ln -s /etc/nginx/sites-available/marketvoice.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-### Systemd Service (Production)
-
-```ini
-# /etc/systemd/system/restaurant-agent.service
-[Unit]
-Description=Restaurant Intelligence Agent
-After=network.target
-
-[Service]
-User=ubuntu
-WorkingDirectory=/opt/reddit-agent
-ExecStart=/opt/reddit-agent/venv/bin/python main.py
-Restart=always
-RestartSec=30
-EnvironmentFile=/opt/reddit-agent/.env
-
-[Install]
-WantedBy=multi-user.target
-```
+### SSL with Certbot
 
 ```bash
-sudo systemctl enable restaurant-agent
-sudo systemctl start restaurant-agent
+# Verify DNS first
+dig +short voice.restaurantiq.ai  # Should return 72.62.82.26
+
+# Install SSL
+sudo certbot --nginx -d voice.restaurantiq.ai
 ```
+
+---
+
+## Database Backup
+
+```bash
+# Manual backup
+bash scripts/backup-db.sh
+
+# Schedule daily backup (crontab)
+0 2 * * * /opt/marketvoice/app/scripts/backup-db.sh >> /opt/marketvoice/backups/backup.log 2>&1
+```
+
+Backups are saved to `/opt/marketvoice/backups/db/` with 7-day retention.
+
+## Database Restore
+
+```bash
+# Restore from backup
+gunzip -c /opt/marketvoice/backups/db/marketvoice-YYYYMMDD-HHMMSS.sql.gz | \
+  docker exec -i marketvoice-postgres psql -U marketvoice_user marketvoice
+```
+
+---
+
+## VPS Pre-Deployment Inspection
+
+Run this FIRST before deploying to check existing services:
+
+```bash
+bash scripts/inspect-vps.sh
+```
+
+---
+
+## Full VPS Deployment
+
+```bash
+bash scripts/deploy-vps.sh
+```
+
+---
+
+## Verify Existing Projects Not Affected
+
+After deployment, verify existing services still run:
+
+```bash
+# Check all containers
+docker ps
+
+# Check leads.maxwelllai.com
+curl -I https://leads.maxwelllai.com
+
+# Check n8n
+curl -I http://localhost:5678
+
+# Nginx test
+sudo nginx -t
+
+# MarketVoice app
+curl -I http://127.0.0.1:3031
+```
+
+---
+
+## Troubleshoot Nginx
+
+```bash
+# Test config
+sudo nginx -t
+
+# View error log
+sudo tail -f /var/log/nginx/marketvoice.error.log
+
+# View access log
+sudo tail -f /var/log/nginx/marketvoice.access.log
+
+# Reload nginx
+sudo systemctl reload nginx
+
+# Restore backup if needed
+sudo cp -a /opt/marketvoice/backups/nginx-sites-available-<TIMESTAMP>/ /etc/nginx/sites-available/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+---
 
 ## Project Structure
 
 ```
-Reddit-Agent/
-├── main.py                     # Main orchestrator
-├── config/config.yaml          # All settings
-├── .env.example                # Credentials template
-├── requirements.txt
-├── src/
-│   ├── agents/
-│   │   ├── reddit_monitor.py   # Reddit collection
-│   │   ├── ai_scorer.py        # Opportunity scoring
-│   │   ├── lead_detector.py    # Lead detection
-│   │   ├── reply_generator.py  # AI reply drafts
-│   │   └── post_generator.py   # Weekly content
-│   ├── database/
-│   │   ├── models.py           # SQLite schema
-│   │   └── db.py               # Session management
-│   ├── telegram/
-│   │   ├── bot.py              # Bot setup + alerts
-│   │   ├── handlers.py         # Command handlers
-│   │   └── keyboards.py        # Inline buttons
-│   ├── dashboard/
-│   │   └── app.py              # Streamlit dashboard
-│   └── utils/
-│       ├── ollama_client.py    # Ollama API client
-│       └── logger.py           # Logging setup
-├── n8n/workflows/              # n8n workflow exports
-├── docker/                     # Docker Compose configs
-└── scripts/                    # Setup + start scripts
+/opt/marketvoice/app/
+├── app/
+│   ├── api/             # Next.js API routes
+│   │   ├── auth/        # Login/logout
+│   │   ├── overview/    # Stats endpoint
+│   │   ├── leads/       # Leads with filtering
+│   │   ├── cities/      # City ranking
+│   │   ├── competitors/ # Competitor mentions
+│   │   ├── pain-points/ # Pain point ranking
+│   │   ├── posts/[id]/  # Lead detail
+│   │   └── ingest/      # n8n → DB webhook
+│   ├── dashboard/       # Dashboard pages
+│   ├── login/           # Login page
+│   └── globals.css
+├── components/
+│   ├── ui/              # Base UI components
+│   ├── layout/          # Sidebar, header
+│   └── dashboard/       # Stat cards, charts
+├── lib/                 # Prisma, auth, utils
+├── prisma/
+│   ├── schema.prisma    # DB schema
+│   └── seed.ts          # 28 Reddit sources
+├── n8n/
+│   └── marketvoice-workflow.json
+├── nginx/
+│   └── marketvoice.conf
+├── scripts/
+│   ├── inspect-vps.sh
+│   ├── deploy-vps.sh
+│   └── backup-db.sh
+├── docker-compose.yml
+├── Dockerfile
+└── .env.example
 ```
 
-## Roadmap
+---
 
-- [ ] Google Reviews monitoring
-- [ ] Yelp monitoring
-- [ ] Restaurant permit/registration data
-- [ ] GEO-based monitoring
-- [ ] AI visibility monitoring
-- [ ] Multi-account Reddit support
-- [ ] CRM integration
-- [ ] Sales pipeline management
-- [ ] PostgreSQL migration path
+## Dashboard Pages
+
+| Page | URL | Description |
+|------|-----|-------------|
+| Overview | `/dashboard` | Stats, trend chart, recent leads |
+| Leads | `/dashboard/leads` | Filterable lead table |
+| Cities | `/dashboard/cities` | Market ranking by city |
+| Competitors | `/dashboard/competitors` | Competitor pain map |
+| Pain Points | `/dashboard/pain-points` | Pain point frequency |
+| Lead Detail | `/dashboard/posts/[id]` | Full AI analysis |
+
+---
+
+## API Endpoints
+
+```
+GET  /api/overview?range=24h|7d|30d|all
+GET  /api/leads?range=7d&intent=high&city=...&minScore=7
+GET  /api/cities?range=30d
+GET  /api/competitors?range=30d
+GET  /api/pain-points?range=30d
+GET  /api/posts/:id
+POST /api/ingest          (n8n webhook, requires X-Webhook-Secret header)
+GET  /api/health          (health check)
+```

@@ -1,0 +1,475 @@
+{
+  "name": "MarketVoice — Reddit Lead Intelligence",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "node-schedule-trigger",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, source_name AS \"sourceName\", subreddit, rss_url AS \"rssUrl\", city, state, region, source_type AS \"sourceType\", priority FROM marketvoice_sources WHERE active = true ORDER BY priority DESC;",
+        "options": {}
+      },
+      "id": "node-fetch-sources",
+      "name": "Fetch Active Sources",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [460, 300],
+      "credentials": {
+        "postgres": {
+          "id": "PLACEHOLDER_POSTGRES_CRED_ID",
+          "name": "MarketVoice PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "node-split-sources",
+      "name": "Loop Over Sources",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.rssUrl }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "node-fetch-rss",
+      "name": "Fetch RSS Feed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse RSS XML and normalize fields\nconst xml = $input.first().json.data;\nconst sourceItem = $('Loop Over Sources').item.json;\n\n// Simple XML item extractor\nfunction extractAll(xml, tag) {\n  const re = new RegExp(`<${tag}[^>]*>([\\\\s\\\\S]*?)<\\/${tag}>`, 'gi');\n  const matches = [];\n  let m;\n  while ((m = re.exec(xml)) !== null) matches.push(m[1].trim());\n  return matches;\n}\n\nfunction stripCdata(str) {\n  return str.replace(/<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>/gi, '$1').trim();\n}\n\nfunction decodeHtmlEntities(str) {\n  return str\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .trim();\n}\n\nfunction extractLinks(xml) {\n  const re = /<link>([^<]+)<\\/link>/gi;\n  const matches = [];\n  let m;\n  while ((m = re.exec(xml)) !== null) {\n    const val = m[1].trim();\n    if (val.startsWith('http') && val.includes('/comments/')) matches.push(val);\n  }\n  return matches;\n}\n\nconst titles = extractAll(xml, 'title').map(stripCdata).map(decodeHtmlEntities);\nconst links  = extractLinks(xml);\nconst authors = extractAll(xml, 'author').map(stripCdata);\nconst pubDates = extractAll(xml, 'pubDate');\nconst contents = extractAll(xml, 'content:encoded').map(stripCdata);\nconst descriptions = extractAll(xml, 'description').map(stripCdata).map(decodeHtmlEntities);\n\n// Skip the first title/description (feed-level)\nconst itemTitles = titles.slice(1);\nconst itemDescriptions = descriptions.slice(1);\n\nconst items = links.map((link, i) => ({\n  json: {\n    title:      itemTitles[i]      || '',\n    url:        link,\n    author:     authors[i]         || 'unknown',\n    posted_at:  pubDates[i]        ? new Date(pubDates[i]).toISOString() : new Date().toISOString(),\n    content:    contents[i]        || itemDescriptions[i] || '',\n    subreddit:  sourceItem.subreddit,\n    sourceId:   sourceItem.id,\n    sourceName: sourceItem.sourceName,\n    city:       sourceItem.city    || null,\n    state:      sourceItem.state   || null,\n    region:     sourceItem.region  || null,\n    sourceType: sourceItem.sourceType,\n  }\n}));\n\nreturn items.length > 0 ? items : [{ json: { _empty: true } }];\n"
+      },
+      "id": "node-normalize-rss",
+      "name": "Normalize RSS Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-not-empty",
+              "leftValue": "={{ $json._empty }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-filter-empty",
+      "name": "Skip Empty Feeds",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT url FROM marketvoice_posts WHERE url = '{{ $json.url }}' LIMIT 1;",
+        "options": {}
+      },
+      "id": "node-dedup-check",
+      "name": "Dedup Check by URL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1560, 300],
+      "credentials": {
+        "postgres": {
+          "id": "PLACEHOLDER_POSTGRES_CRED_ID",
+          "name": "MarketVoice PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pass through original RSS item data; attach dedup result\nconst rssItem = $('Skip Empty Feeds').item.json;\nconst dbRows  = $input.all();\n\n// If any row returned, it's a duplicate\nconst isDuplicate = dbRows.some(r => r.json && r.json.url);\n\nreturn [{ json: { ...rssItem, _isDuplicate: isDuplicate } }];\n"
+      },
+      "id": "node-merge-dedup",
+      "name": "Merge Dedup Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-not-dup",
+              "leftValue": "={{ $json._isDuplicate }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-filter-duplicates",
+      "name": "Filter Duplicates",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Keyword pre-filter — only pass posts that match at least one keyword\nconst KEYWORDS = [\n  'POS', 'point of sale', 'Toast', 'Square', 'Clover', 'Lightspeed',\n  'SpotOn', 'Revel', 'Menusifu', 'Chowbus',\n  'restaurant system', 'ordering system', 'online ordering', 'kiosk',\n  'self ordering', 'delivery integration',\n  'DoorDash integration', 'Uber Eats integration',\n  'payment processing', 'credit card processing',\n  'merchant service', 'processing fee', 'card fee',\n  'inventory management', 'menu management',\n  'kitchen printer', 'receipt printer', 'KDS', 'kitchen display',\n  'loyalty program', 'gift card', 'QR ordering',\n  'restaurant opening', 'soft opening', 'opening a restaurant',\n  'restaurant owner'\n];\n\nconst post = $json;\nconst searchText = ((post.title || '') + ' ' + (post.content || '')).toLowerCase();\n\nconst matched = KEYWORDS.filter(kw => searchText.includes(kw.toLowerCase()));\n\nif (matched.length === 0) return [];\n\nreturn [{ json: { ...post, matched_keywords: matched } }];\n"
+      },
+      "id": "node-keyword-filter",
+      "name": "Keyword Pre-Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a sales intelligence analyst for Chowbus POS — a restaurant point-of-sale and management platform focused on Asian restaurants. Your job is to analyze Reddit posts and identify high-value sales leads.\n\nFor each post, extract and return a JSON object with EXACTLY these fields:\n- is_relevant (boolean): true if the post indicates a restaurant owner or manager with POS/tech needs\n- detected_city (string|null): city name if mentioned\n- detected_state (string|null): US state abbreviation if mentioned\n- location_confidence (string): 'high'|'medium'|'low'|'none'\n- business_type (string|null): e.g. 'restaurant', 'food truck', 'cafe', 'bar', etc.\n- asian_restaurant_signal (boolean): true if the post signals an Asian restaurant (Chinese, Japanese, Korean, Thai, Vietnamese, etc.)\n- cuisine_type (string|null): specific cuisine if detectable\n- topic_category (string): one of 'pos_system'|'payment_processing'|'online_ordering'|'delivery'|'operations'|'opening'|'complaint'|'other'\n- competitors_mentioned (string[]): list of competitor POS systems mentioned (Toast, Square, Clover, Lightspeed, SpotOn, Revel, etc.)\n- pain_points (string[]): list of pain points expressed (e.g. 'high fees', 'poor support', 'crashes', 'no Chinese menu')\n- buying_intent (string): one of 'high'|'medium'|'low'|'none'\n- lead_score (number): 1-10 integer; 10 = urgent hot lead, 1 = no relevance\n- market_score (number): 1-10 integer; market intelligence value regardless of direct lead potential\n- summary (string): 2-3 sentence summary of the post and its sales relevance\n- suggested_action (string): specific action a sales rep should take\n- sales_angle (string): how to position Chowbus POS for this prospect\n\nRespond with ONLY valid JSON, no markdown fences, no extra text."
+            },
+            {
+              "role": "user",
+              "content": "=== Reddit Post ===\nSubreddit: r/{{ $json.subreddit }}\nTitle: {{ $json.title }}\nAuthor: {{ $json.author }}\nPosted: {{ $json.posted_at }}\nURL: {{ $json.url }}\nMatched Keywords: {{ $json.matched_keywords.join(', ') }}\n\nContent:\n{{ $json.content.substring(0, 3000) }}\n\nAnalyze this post and return the JSON analysis object."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.1,
+          "maxTokens": 1000
+        }
+      },
+      "id": "node-openai-analysis",
+      "name": "OpenAI Analysis",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.3,
+      "position": [2440, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "PLACEHOLDER_OPENAI_CRED_ID",
+          "name": "MarketVoice OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge OpenAI analysis with original post data\nconst rssItem = $('Keyword Pre-Filter').item.json;\nconst aiResponseText = $json.message?.content || $json.choices?.[0]?.message?.content || '';\n\nlet analysis = {};\ntry {\n  // Strip markdown fences if present\n  const cleaned = aiResponseText.replace(/^```json\\s*/i, '').replace(/^```\\s*/i, '').replace(/```\\s*$/i, '').trim();\n  analysis = JSON.parse(cleaned);\n} catch (e) {\n  analysis = {\n    is_relevant: false,\n    lead_score: 0,\n    market_score: 0,\n    buying_intent: 'none',\n    summary: 'Failed to parse AI response',\n    _parse_error: String(e)\n  };\n}\n\nreturn [{\n  json: {\n    // Original post fields\n    title:            rssItem.title,\n    url:              rssItem.url,\n    author:           rssItem.author,\n    posted_at:        rssItem.posted_at,\n    content:          rssItem.content,\n    subreddit:        rssItem.subreddit,\n    sourceId:         rssItem.sourceId,\n    matched_keywords: rssItem.matched_keywords || [],\n    // AI analysis fields\n    is_relevant:           analysis.is_relevant           ?? false,\n    detected_city:         analysis.detected_city          ?? null,\n    detected_state:        analysis.detected_state         ?? null,\n    location_confidence:   analysis.location_confidence    ?? 'none',\n    business_type:         analysis.business_type          ?? null,\n    asian_restaurant_signal: analysis.asian_restaurant_signal ?? false,\n    cuisine_type:          analysis.cuisine_type           ?? null,\n    topic_category:        analysis.topic_category         ?? 'other',\n    competitors_mentioned: analysis.competitors_mentioned  ?? [],\n    pain_points:           analysis.pain_points            ?? [],\n    buying_intent:         analysis.buying_intent          ?? 'none',\n    lead_score:            analysis.lead_score             ?? 0,\n    market_score:          analysis.market_score           ?? 0,\n    summary:               analysis.summary               ?? '',\n    suggested_action:      analysis.suggested_action      ?? '',\n    sales_angle:           analysis.sales_angle           ?? '',\n  }\n}];\n"
+      },
+      "id": "node-merge-analysis",
+      "name": "Merge Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2660, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INGEST_URL || 'https://voice.restaurantiq.ai/api/ingest' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-webhook-secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-post-ingest",
+      "name": "POST to /api/ingest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2880, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-high-score",
+              "leftValue": "={{ $('Merge Analysis').item.json.lead_score }}",
+              "rightValue": 8,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-filter-high-intent",
+      "name": "High-Intent Lead? (score >= 8)",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [3100, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "=🔥 *High-Intent Lead Detected*\n\n*Score:* {{ $('Merge Analysis').item.json.lead_score }}/10\n*Intent:* {{ $('Merge Analysis').item.json.buying_intent }}\n*Subreddit:* r/{{ $('Merge Analysis').item.json.subreddit }}\n*Title:* {{ $('Merge Analysis').item.json.title }}\n\n*Summary:* {{ $('Merge Analysis').item.json.summary }}\n\n*Action:* {{ $('Merge Analysis').item.json.suggested_action }}\n\n🔗 {{ $('Merge Analysis').item.json.url }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "node-telegram-notify",
+      "name": "Telegram Notification",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3320, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "PLACEHOLDER_TELEGRAM_CRED_ID",
+          "name": "MarketVoice Telegram Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Sources": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Sources": {
+      "main": [
+        [
+          {
+            "node": "Fetch RSS Feed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch RSS Feed": {
+      "main": [
+        [
+          {
+            "node": "Normalize RSS Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize RSS Items": {
+      "main": [
+        [
+          {
+            "node": "Skip Empty Feeds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Empty Feeds": {
+      "main": [
+        [
+          {
+            "node": "Dedup Check by URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedup Check by URL": {
+      "main": [
+        [
+          {
+            "node": "Merge Dedup Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Dedup Result": {
+      "main": [
+        [
+          {
+            "node": "Filter Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Keyword Pre-Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keyword Pre-Filter": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Analysis": {
+      "main": [
+        [
+          {
+            "node": "Merge Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Analysis": {
+      "main": [
+        [
+          {
+            "node": "POST to /api/ingest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST to /api/ingest": {
+      "main": [
+        [
+          {
+            "node": "High-Intent Lead? (score >= 8)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High-Intent Lead? (score >= 8)": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "marketvoice"
+    },
+    {
+      "name": "reddit"
+    },
+    {
+      "name": "leads"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2026-06-02T00:00:00.000Z",
+  "versionId": "1"
+}

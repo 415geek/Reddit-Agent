@@ -1,9 +1,0 @@
-version: "3.9"
-
-# CPU-only variant — no GPU reservation
-# Use: docker compose -f docker/docker-compose.yml -f docker/docker-compose.cpu.yml up
-
-services:
-  ollama:
-    deploy:
-      resources: {}

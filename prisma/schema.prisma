@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model MarketvoiceSource {
+  id         String   @id @default(cuid())
+  sourceName String
+  subreddit  String
+  rssUrl     String
+  city       String?
+  state      String?
+  region     String?
+  sourceType String   // city | industry | competitor | national
+  priority   Int      @default(5)
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  posts MarketvoicePost[]
+
+  @@map("marketvoice_sources")
+}
+
+model MarketvoicePost {
+  id                  String   @id @default(cuid())
+  sourceId            String
+  subreddit           String
+  title               String
+  url                 String   @unique
+  author              String?
+  postedAt            DateTime
+  rawContent          String?  @db.Text
+  matchedKeywords     String[] @default([])
+  isRelevant          Boolean  @default(false)
+  detectedCity        String?
+  detectedState       String?
+  locationConfidence  String?
+  businessType        String?
+  asianRestaurantSignal Boolean @default(false)
+  cuisineType         String?
+  topicCategory       String?
+  competitorsMentioned String[] @default([])
+  painPoints          String[] @default([])
+  buyingIntent        String?
+  leadScore           Int      @default(0)
+  marketScore         Int      @default(0)
+  summary             String?  @db.Text
+  suggestedAction     String?  @db.Text
+  salesAngle          String?  @db.Text
+  aiRawResponse       String?  @db.Text
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  source MarketvoiceSource @relation(fields: [sourceId], references: [id])
+
+  @@index([subreddit])
+  @@index([buyingIntent])
+  @@index([leadScore])
+  @@index([postedAt])
+  @@index([detectedCity, detectedState])
+  @@index([isRelevant])
+  @@map("marketvoice_posts")
+}
+
+model MarketvoiceDailyReport {
+  id                  String   @id @default(cuid())
+  reportDate          DateTime @unique
+  totalPostsScanned   Int      @default(0)
+  relevantPosts       Int      @default(0)
+  highIntentLeads     Int      @default(0)
+  topCities           Json?
+  topCompetitors      Json?
+  topPainPoints       Json?
+  summary             String?  @db.Text
+  recommendedActions  String?  @db.Text
+  createdAt           DateTime @default(now())
+
+  @@map("marketvoice_daily_reports")
+}
