@@ -172,39 +172,41 @@
     },
     {
       "parameters": {
-        "model": "gpt-4o-mini",
-        "messages": {
-          "values": [
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "role": "system",
-              "content": "You are a sales intelligence analyst for Chowbus POS — a restaurant point-of-sale and management platform focused on Asian restaurants. Your job is to analyze Reddit posts and identify high-value sales leads.\n\nFor each post, extract and return a JSON object with EXACTLY these fields:\n- is_relevant (boolean): true if the post indicates a restaurant owner or manager with POS/tech needs\n- detected_city (string|null): city name if mentioned\n- detected_state (string|null): US state abbreviation if mentioned\n- location_confidence (string): 'high'|'medium'|'low'|'none'\n- business_type (string|null): e.g. 'restaurant', 'food truck', 'cafe', 'bar', etc.\n- asian_restaurant_signal (boolean): true if the post signals an Asian restaurant (Chinese, Japanese, Korean, Thai, Vietnamese, etc.)\n- cuisine_type (string|null): specific cuisine if detectable\n- topic_category (string): one of 'pos_system'|'payment_processing'|'online_ordering'|'delivery'|'operations'|'opening'|'complaint'|'other'\n- competitors_mentioned (string[]): list of competitor POS systems mentioned (Toast, Square, Clover, Lightspeed, SpotOn, Revel, etc.)\n- pain_points (string[]): list of pain points expressed (e.g. 'high fees', 'poor support', 'crashes', 'no Chinese menu')\n- buying_intent (string): one of 'high'|'medium'|'low'|'none'\n- lead_score (number): 1-10 integer; 10 = urgent hot lead, 1 = no relevance\n- market_score (number): 1-10 integer; market intelligence value regardless of direct lead potential\n- summary (string): 2-3 sentence summary of the post and its sales relevance\n- suggested_action (string): specific action a sales rep should take\n- sales_angle (string): how to position Chowbus POS for this prospect\n\nRespond with ONLY valid JSON, no markdown fences, no extra text."
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
             },
             {
-              "role": "user",
-              "content": "=== Reddit Post ===\nSubreddit: r/{{ $json.subreddit }}\nTitle: {{ $json.title }}\nAuthor: {{ $json.author }}\nPosted: {{ $json.posted_at }}\nURL: {{ $json.url }}\nMatched Keywords: {{ $json.matched_keywords.join(', ') }}\n\nContent:\n{{ $json.content.substring(0, 3000) }}\n\nAnalyze this post and return the JSON analysis object."
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
             }
           ]
         },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 1024, temperature: 0.1, system: 'You are a sales intelligence analyst for Chowbus POS — a restaurant point-of-sale and management platform focused on Asian restaurants. Your job is to analyze Reddit posts and identify high-value sales leads.\\n\\nFor each post, extract and return a JSON object with EXACTLY these fields:\\n- is_relevant (boolean): true if the post indicates a restaurant owner or manager with POS/tech needs\\n- detected_city (string|null): city name if mentioned\\n- detected_state (string|null): US state abbreviation if mentioned\\n- location_confidence (string): high|medium|low|none\\n- business_type (string|null): e.g. restaurant, food truck, cafe, bar, etc.\\n- asian_restaurant_signal (boolean): true if the post signals an Asian restaurant (Chinese, Japanese, Korean, Thai, Vietnamese, etc.)\\n- cuisine_type (string|null): specific cuisine if detectable\\n- topic_category (string): one of pos_system|payment_processing|online_ordering|delivery|operations|opening|complaint|other\\n- competitors_mentioned (string[]): list of competitor POS systems mentioned (Toast, Square, Clover, Lightspeed, SpotOn, Revel, etc.)\\n- pain_points (string[]): list of pain points expressed (e.g. high fees, poor support, crashes, no Chinese menu)\\n- buying_intent (string): one of high|medium|low|none\\n- lead_score (number): 1-10 integer; 10 = urgent hot lead, 1 = no relevance\\n- market_score (number): 1-10 integer; market intelligence value regardless of direct lead potential\\n- summary (string): 2-3 sentence summary of the post and its sales relevance\\n- suggested_action (string): specific action a sales rep should take\\n- sales_angle (string): how to position Chowbus POS for this prospect\\n\\nRespond with ONLY valid JSON, no markdown fences, no extra text.', messages: [{ role: 'user', content: '=== Reddit Post ===\\nSubreddit: r/' + $json.subreddit + '\\nTitle: ' + $json.title + '\\nAuthor: ' + $json.author + '\\nPosted: ' + $json.posted_at + '\\nURL: ' + $json.url + '\\nMatched Keywords: ' + ($json.matched_keywords || []).join(', ') + '\\n\\nContent:\\n' + ($json.content || '').substring(0, 3000) + '\\n\\nAnalyze this post and return the JSON analysis object.' }] }) }}",
         "options": {
-          "temperature": 0.1,
-          "maxTokens": 1000
+          "timeout": 30000
         }
       },
-      "id": "node-openai-analysis",
-      "name": "OpenAI Analysis",
-      "type": "n8n-nodes-base.openAi",
-      "typeVersion": 1.3,
-      "position": [2440, 300],
-      "credentials": {
-        "openAiApi": {
-          "id": "PLACEHOLDER_OPENAI_CRED_ID",
-          "name": "MarketVoice OpenAI"
-        }
-      }
+      "id": "node-anthropic-analysis",
+      "name": "AI Analysis (Anthropic Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2440, 300]
     },
     {
       "parameters": {
-        "jsCode": "// Merge OpenAI analysis with original post data\nconst rssItem = $('Keyword Pre-Filter').item.json;\nconst aiResponseText = $json.message?.content || $json.choices?.[0]?.message?.content || '';\n\nlet analysis = {};\ntry {\n  // Strip markdown fences if present\n  const cleaned = aiResponseText.replace(/^```json\\s*/i, '').replace(/^```\\s*/i, '').replace(/```\\s*$/i, '').trim();\n  analysis = JSON.parse(cleaned);\n} catch (e) {\n  analysis = {\n    is_relevant: false,\n    lead_score: 0,\n    market_score: 0,\n    buying_intent: 'none',\n    summary: 'Failed to parse AI response',\n    _parse_error: String(e)\n  };\n}\n\nreturn [{\n  json: {\n    // Original post fields\n    title:            rssItem.title,\n    url:              rssItem.url,\n    author:           rssItem.author,\n    posted_at:        rssItem.posted_at,\n    content:          rssItem.content,\n    subreddit:        rssItem.subreddit,\n    sourceId:         rssItem.sourceId,\n    matched_keywords: rssItem.matched_keywords || [],\n    // AI analysis fields\n    is_relevant:           analysis.is_relevant           ?? false,\n    detected_city:         analysis.detected_city          ?? null,\n    detected_state:        analysis.detected_state         ?? null,\n    location_confidence:   analysis.location_confidence    ?? 'none',\n    business_type:         analysis.business_type          ?? null,\n    asian_restaurant_signal: analysis.asian_restaurant_signal ?? false,\n    cuisine_type:          analysis.cuisine_type           ?? null,\n    topic_category:        analysis.topic_category         ?? 'other',\n    competitors_mentioned: analysis.competitors_mentioned  ?? [],\n    pain_points:           analysis.pain_points            ?? [],\n    buying_intent:         analysis.buying_intent          ?? 'none',\n    lead_score:            analysis.lead_score             ?? 0,\n    market_score:          analysis.market_score           ?? 0,\n    summary:               analysis.summary               ?? '',\n    suggested_action:      analysis.suggested_action      ?? '',\n    sales_angle:           analysis.sales_angle           ?? '',\n  }\n}];\n"
+        "jsCode": "// Merge Anthropic analysis with original post data\nconst rssItem = $('Keyword Pre-Filter').item.json;\nconst aiResponseText = $json.content?.[0]?.text || $json.choices?.[0]?.message?.content || '';\n\nlet analysis = {};\ntry {\n  // Strip markdown fences if present\n  const cleaned = aiResponseText.replace(/^```json\\s*/i, '').replace(/^```\\s*/i, '').replace(/```\\s*$/i, '').trim();\n  analysis = JSON.parse(cleaned);\n} catch (e) {\n  analysis = {\n    is_relevant: false,\n    lead_score: 0,\n    market_score: 0,\n    buying_intent: 'none',\n    summary: 'Failed to parse AI response',\n    _parse_error: String(e)\n  };\n}\n\nreturn [{\n  json: {\n    // Original post fields\n    title:            rssItem.title,\n    url:              rssItem.url,\n    author:           rssItem.author,\n    posted_at:        rssItem.posted_at,\n    content:          rssItem.content,\n    subreddit:        rssItem.subreddit,\n    sourceId:         rssItem.sourceId,\n    matched_keywords: rssItem.matched_keywords || [],\n    // AI analysis fields\n    is_relevant:           analysis.is_relevant           ?? false,\n    detected_city:         analysis.detected_city          ?? null,\n    detected_state:        analysis.detected_state         ?? null,\n    location_confidence:   analysis.location_confidence    ?? 'none',\n    business_type:         analysis.business_type          ?? null,\n    asian_restaurant_signal: analysis.asian_restaurant_signal ?? false,\n    cuisine_type:          analysis.cuisine_type           ?? null,\n    topic_category:        analysis.topic_category         ?? 'other',\n    competitors_mentioned: analysis.competitors_mentioned  ?? [],\n    pain_points:           analysis.pain_points            ?? [],\n    buying_intent:         analysis.buying_intent          ?? 'none',\n    lead_score:            analysis.lead_score             ?? 0,\n    market_score:          analysis.market_score           ?? 0,\n    summary:               analysis.summary               ?? '',\n    suggested_action:      analysis.suggested_action      ?? '',\n    sales_angle:           analysis.sales_angle           ?? '',\n  }\n}];\n"
       },
       "id": "node-merge-analysis",
       "name": "Merge Analysis",
@@ -276,23 +278,29 @@
     },
     {
       "parameters": {
-        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
-        "text": "=🔥 *High-Intent Lead Detected*\n\n*Score:* {{ $('Merge Analysis').item.json.lead_score }}/10\n*Intent:* {{ $('Merge Analysis').item.json.buying_intent }}\n*Subreddit:* r/{{ $('Merge Analysis').item.json.subreddit }}\n*Title:* {{ $('Merge Analysis').item.json.title }}\n\n*Summary:* {{ $('Merge Analysis').item.json.summary }}\n\n*Action:* {{ $('Merge Analysis').item.json.suggested_action }}\n\n🔗 {{ $('Merge Analysis').item.json.url }}",
-        "additionalFields": {
-          "parse_mode": "Markdown"
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_CHAT_ID, parse_mode: 'Markdown', text: '🔥 *High-Intent Lead Detected*\\n\\n*Score:* ' + $('Merge Analysis').item.json.lead_score + '/10\\n*Intent:* ' + $('Merge Analysis').item.json.buying_intent + '\\n*Subreddit:* r/' + $('Merge Analysis').item.json.subreddit + '\\n*Title:* ' + $('Merge Analysis').item.json.title + '\\n\\n*Summary:* ' + $('Merge Analysis').item.json.summary + '\\n\\n*Action:* ' + $('Merge Analysis').item.json.suggested_action + '\\n\\n🔗 ' + $('Merge Analysis').item.json.url }) }}",
+        "options": {
+          "timeout": 10000
         }
       },
       "id": "node-telegram-notify",
       "name": "Telegram Notification",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [3320, 300],
-      "credentials": {
-        "telegramApi": {
-          "id": "PLACEHOLDER_TELEGRAM_CRED_ID",
-          "name": "MarketVoice Telegram Bot"
-        }
-      }
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3320, 300]
     }
   ],
   "connections": {
@@ -399,14 +407,14 @@
       "main": [
         [
           {
-            "node": "OpenAI Analysis",
+            "node": "AI Analysis (Anthropic Claude)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "OpenAI Analysis": {
+    "AI Analysis (Anthropic Claude)": {
       "main": [
         [
           {

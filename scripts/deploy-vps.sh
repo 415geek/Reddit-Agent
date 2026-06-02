@@ -1,144 +1,193 @@
 #!/usr/bin/env bash
 # MarketVoice — VPS Deployment Script
-# Prerequisites: Docker, Docker Compose, Nginx installed on VPS
+# Run on VPS as root: bash deploy-vps.sh
+# Before running, set the environment variables below or export them in your shell.
 set -euo pipefail
 
-DEPLOY_DIR="/opt/marketvoice"
-APP_DIR="$DEPLOY_DIR/app"
-BACKUP_DIR="$DEPLOY_DIR/backups"
-NGINX_CONF="/etc/nginx/sites-available/marketvoice.conf"
-NGINX_LINK="/etc/nginx/sites-enabled/marketvoice.conf"
+APP_DIR="/opt/marketvoice/app"
+BACKUP_DIR="/opt/marketvoice/backups"
+BRANCH="claude/restaurant-intelligence-agent-HQMW9"
+REPO_URL="https://github.com/415geek/Reddit-Agent.git"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+
+# ── Required credentials (set these before running) ───────────────────────────
+# Export these variables in your shell, or edit this file directly:
+DB_PASSWORD="${DB_PASSWORD:?Set DB_PASSWORD}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}"
+JWT_SECRET="${JWT_SECRET:?Set JWT_SECRET}"
+WEBHOOK_SECRET="${WEBHOOK_SECRET:?Set WEBHOOK_SECRET}"
+ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:?Set ANTHROPIC_API_KEY}"
+TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
+APP_URL="${APP_URL:-https://voice.restaurantiq.ai}"
+ADMIN_USER="${ADMIN_USER:-admin}"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
-echo "=== MarketVoice VPS Deployment ==="
+echo "=== MarketVoice VPS Deployment — ${TIMESTAMP} ==="
 
 # ── Safety checks ─────────────────────────────────────────────────────────────
 info "Running pre-deployment safety checks..."
 
-# Verify this is NOT run as root without sudo
-if [ "$(id -u)" -ne 0 ] && ! sudo -n true 2>/dev/null; then
-    error "This script requires sudo privileges"
-fi
-
-# Check port 3031 isn't occupied
-if ss -tulpn 2>/dev/null | grep -q ":3031 "; then
-    error "Port 3031 is already in use. Check with: ss -tulpn | grep 3031"
-fi
-info "Port 3031 is available ✓"
-
-# Check Docker
 command -v docker &>/dev/null || error "Docker is not installed"
 info "Docker available ✓"
 
-# ── Create project directory ───────────────────────────────────────────────────
-info "Creating project directories..."
-sudo mkdir -p "$DEPLOY_DIR" "$BACKUP_DIR"
-sudo chown -R "$(whoami):$(whoami)" "$DEPLOY_DIR"
-mkdir -p "$APP_DIR"
-
-# ── Copy application files ─────────────────────────────────────────────────────
-info "Copying application files to $APP_DIR..."
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_DIR="$(dirname "$SCRIPT_DIR")"
-rsync -av --exclude='.git' --exclude='node_modules' --exclude='.next' \
-    "$SOURCE_DIR/" "$APP_DIR/"
-
-# ── Setup environment file ─────────────────────────────────────────────────────
-if [ ! -f "$APP_DIR/.env" ]; then
-    cp "$APP_DIR/.env.example" "$APP_DIR/.env"
-
-    # Generate secrets
-    JWT_SECRET=$(openssl rand -base64 32)
-    WEBHOOK_SECRET=$(openssl rand -base64 24)
-    DB_PASSWORD=$(openssl rand -base64 20 | tr -d '=+/')
-
-    sed -i "s|CHANGE_ME_PASSWORD|$DB_PASSWORD|g" "$APP_DIR/.env"
-    sed -i "s|CHANGE_ME_JWT_SECRET_32_CHARS_MIN|$JWT_SECRET|g" "$APP_DIR/.env"
-    sed -i "s|CHANGE_ME_SECRET|$WEBHOOK_SECRET|g" "$APP_DIR/.env"
-    sed -i "s|POSTGRES_PASSWORD:-CHANGE_ME_PASSWORD|POSTGRES_PASSWORD:-$DB_PASSWORD|g" "$APP_DIR/docker-compose.yml" 2>/dev/null || true
-
-    warn "Created .env with generated secrets."
-    warn "REQUIRED: Edit $APP_DIR/.env and set:"
-    warn "  - MARKETVOICE_ADMIN_PASSWORD"
-    warn "  - OPENAI_API_KEY or ANTHROPIC_API_KEY"
-    warn "  - DATABASE_URL (update password to match POSTGRES_PASSWORD)"
-    echo ""
-    read -rp "Press Enter after editing .env to continue..."
+if ss -tulpn 2>/dev/null | grep -q ":3031 "; then
+  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "marketvoice-app"; then
+    error "Port 3031 is occupied by a non-MarketVoice process."
+  fi
+  warn "Port 3031 already used by MarketVoice container — will be replaced."
 fi
+info "Port safety check passed ✓"
 
-# ── Backup Nginx configs ───────────────────────────────────────────────────────
-info "Backing up Nginx configurations..."
-TIMESTAMP=$(date +%F-%H%M%S)
-if [ -d /etc/nginx/sites-available ]; then
-    sudo cp -a /etc/nginx/sites-available "$BACKUP_DIR/nginx-sites-available-$TIMESTAMP"
-fi
-if [ -d /etc/nginx/sites-enabled ]; then
-    sudo cp -a /etc/nginx/sites-enabled "$BACKUP_DIR/nginx-sites-enabled-$TIMESTAMP"
-fi
-info "Nginx configs backed up to $BACKUP_DIR"
+# ── Create directories ────────────────────────────────────────────────────────
+info "Preparing directories..."
+mkdir -p "${APP_DIR}" "${BACKUP_DIR}/db"
 
-# ── Deploy Docker Compose ──────────────────────────────────────────────────────
-info "Starting MarketVoice containers..."
-cd "$APP_DIR"
-docker compose pull marketvoice-postgres marketvoice-redis 2>/dev/null || true
-docker compose up -d marketvoice-postgres marketvoice-redis
-info "Waiting for database to be ready..."
-sleep 8
-
-# Run migrations + seed
-info "Running database migrations..."
-docker compose run --rm marketvoice-app sh -c "npx prisma migrate deploy && npx prisma db seed" || \
-    warn "Migration had issues — check manually: docker compose logs marketvoice-app"
-
-# Start app
-docker compose up -d marketvoice-app
-info "App container started"
-
-# ── Nginx configuration ────────────────────────────────────────────────────────
-info "Configuring Nginx..."
-sudo cp "$APP_DIR/nginx/marketvoice.conf" "$NGINX_CONF"
-
-if [ ! -L "$NGINX_LINK" ]; then
-    sudo ln -s "$NGINX_CONF" "$NGINX_LINK"
-fi
-
-if sudo nginx -t; then
-    sudo systemctl reload nginx
-    info "Nginx reloaded ✓"
+# ── Clone or update repo ──────────────────────────────────────────────────────
+info "Fetching latest code from GitHub..."
+if [ -d "${APP_DIR}/.git" ]; then
+  cd "${APP_DIR}"
+  git fetch origin "${BRANCH}"
+  git checkout "${BRANCH}"
+  git pull origin "${BRANCH}"
+  info "Repository updated ✓"
 else
-    error "Nginx config test failed — NOT reloading nginx. Check config at $NGINX_CONF"
+  git clone --branch "${BRANCH}" "${REPO_URL}" "${APP_DIR}"
+  cd "${APP_DIR}"
+  info "Repository cloned ✓"
 fi
 
-# ── Verification ──────────────────────────────────────────────────────────────
-echo ""
-info "=== Deployment Verification ==="
-docker compose ps
-echo ""
-ss -tulpn | grep 3031 || warn "Port 3031 not listening yet"
-echo ""
-sudo nginx -t && echo "Nginx: OK ✓"
-echo ""
+# ── Write .env ────────────────────────────────────────────────────────────────
+info "Writing .env with production credentials..."
 
-# Check app health
-sleep 5
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3031/ 2>/dev/null || echo "000")
-info "App HTTP response: $HTTP_CODE"
+cat > "${APP_DIR}/.env" <<EOF
+NODE_ENV=production
 
+MARKETVOICE_APP_PORT=3031
+MARKETVOICE_APP_URL=${APP_URL}
+
+DATABASE_URL=postgresql://marketvoice_user:${DB_PASSWORD}@marketvoice-postgres:5432/marketvoice
+POSTGRES_PASSWORD=${DB_PASSWORD}
+
+AI_PROVIDER=anthropic
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+
+MARKETVOICE_ADMIN_USER=${ADMIN_USER}
+MARKETVOICE_ADMIN_PASSWORD=${ADMIN_PASSWORD}
+JWT_SECRET=${JWT_SECRET}
+
+N8N_WEBHOOK_SECRET=${WEBHOOK_SECRET}
+N8N_INGEST_URL=${APP_URL}/api/ingest
+
+TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+EOF
+
+chmod 600 "${APP_DIR}/.env"
+info ".env created ✓"
+
+# ── Docker: build and start ───────────────────────────────────────────────────
+info "Building Docker image (this may take a few minutes)..."
+cd "${APP_DIR}"
+docker compose build --no-cache
+info "Build complete ✓"
+
+info "Starting containers..."
+docker compose up -d
+
+info "Waiting for PostgreSQL to be ready..."
+for i in $(seq 1 30); do
+  if docker compose exec -T marketvoice-postgres pg_isready -U marketvoice_user -d marketvoice &>/dev/null 2>&1; then
+    info "PostgreSQL ready ✓"
+    break
+  fi
+  if [ "$i" -eq 30 ]; then
+    error "PostgreSQL did not become ready in 60 seconds."
+  fi
+  sleep 2
+done
+
+# ── Migrations and seed ───────────────────────────────────────────────────────
+info "Running database migrations..."
+docker compose exec -T marketvoice-app npx prisma migrate deploy
+info "Migrations applied ✓"
+
+info "Seeding Reddit sources (28 subreddits)..."
+docker compose exec -T marketvoice-app npx prisma db seed
+info "Seed complete ✓"
+
+# ── Nginx ─────────────────────────────────────────────────────────────────────
+info "Configuring Nginx..."
+
+if [ -d /etc/nginx/sites-available ]; then
+  cp -a /etc/nginx/sites-available/ "${BACKUP_DIR}/nginx-sites-available-${TIMESTAMP}/"
+  info "Nginx configs backed up ✓"
+fi
+
+cp "${APP_DIR}/nginx/marketvoice.conf" /etc/nginx/sites-available/marketvoice.conf
+
+if [ ! -L /etc/nginx/sites-enabled/marketvoice.conf ]; then
+  ln -s /etc/nginx/sites-available/marketvoice.conf /etc/nginx/sites-enabled/marketvoice.conf
+fi
+
+if nginx -t; then
+  systemctl reload nginx
+  info "Nginx reloaded ✓"
+else
+  warn "Nginx config test failed — restoring backup"
+  cp -a "${BACKUP_DIR}/nginx-sites-available-${TIMESTAMP}/." /etc/nginx/sites-available/
+  rm -f /etc/nginx/sites-enabled/marketvoice.conf
+  nginx -t && systemctl reload nginx || true
+  error "Nginx setup failed. Application is running on port 3031 but not proxied."
+fi
+
+# ── Verify ────────────────────────────────────────────────────────────────────
+info "Verifying deployment..."
+sleep 6
+
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3031/api/health 2>/dev/null || echo "000")
+if [ "$HTTP_CODE" = "200" ]; then
+  info "Health check: HTTP 200 OK ✓"
+else
+  warn "Health check returned HTTP ${HTTP_CODE}"
+  warn "Showing last 40 lines of app logs:"
+  docker compose logs --tail=40 marketvoice-app
+fi
+
+# ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
-info "=== Deployment Complete ==="
+echo "============================================================"
+echo "  MarketVoice Deployment Complete!"
+echo "============================================================"
 echo ""
-echo "Dashboard: http://$(hostname -I | awk '{print $1}'):3031"
-echo "Domain:    http://voice.restaurantiq.ai (after DNS propagation)"
+echo "Dashboard (direct):  http://$(hostname -I | awk '{print $1}'):3031/login"
+echo "Dashboard (domain):  ${APP_URL}/login  (after DNS + SSL)"
 echo ""
-echo "Next steps:"
-echo "  1. Configure DNS: A record voice.restaurantiq.ai → $(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')"
-echo "  2. Verify DNS:    dig +short voice.restaurantiq.ai"
-echo "  3. Enable SSL:    sudo certbot --nginx -d voice.restaurantiq.ai"
-echo "  4. Import n8n workflow from: $APP_DIR/n8n/marketvoice-workflow.json"
+echo "Login: ${ADMIN_USER} / ${ADMIN_PASSWORD}"
 echo ""
-echo "Logs:"
-echo "  docker compose -f $APP_DIR/docker-compose.yml logs -f marketvoice-app"
+echo "──────────────────────────────────────────────────────────"
+echo "  NEXT STEPS"
+echo "──────────────────────────────────────────────────────────"
+echo ""
+echo "1. DNS — Add A record: voice.restaurantiq.ai → $(curl -s ifconfig.me 2>/dev/null || echo 'YOUR_SERVER_IP')"
+echo "   Verify: dig +short voice.restaurantiq.ai"
+echo ""
+echo "2. SSL (after DNS propagates):"
+echo "   sudo certbot --nginx -d voice.restaurantiq.ai"
+echo ""
+echo "3. n8n Workflow:"
+echo "   a. Open n8n at http://YOUR_SERVER_IP:5678"
+echo "   b. Import: ${APP_DIR}/n8n/marketvoice-workflow.json"
+echo "   c. Add PostgreSQL credential (host: marketvoice-postgres, db: marketvoice, user: marketvoice_user)"
+echo "   d. Settings > Variables > add ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,"
+echo "      N8N_INGEST_URL, N8N_WEBHOOK_SECRET"
+echo "   e. Set PostgreSQL credential on both DB query nodes and activate"
+echo ""
+echo "4. Optional — backup cron:"
+echo "   echo '0 2 * * * bash ${APP_DIR}/scripts/backup-db.sh >> ${BACKUP_DIR}/backup.log 2>&1' | crontab -"
+echo ""
