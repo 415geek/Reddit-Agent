@@ -114,11 +114,11 @@ done
 
 # ── Migrations and seed ───────────────────────────────────────────────────────
 info "Running database migrations..."
-docker compose exec -T marketvoice-app npx prisma migrate deploy
+docker compose exec -T marketvoice-app ./node_modules/.bin/prisma migrate deploy
 info "Migrations applied ✓"
 
 info "Seeding Reddit sources (28 subreddits)..."
-docker compose exec -T marketvoice-app npx prisma db seed
+docker compose exec -T marketvoice-app ./node_modules/.bin/tsx prisma/seed.ts
 info "Seed complete ✓"
 
 # ── Nginx ─────────────────────────────────────────────────────────────────────
