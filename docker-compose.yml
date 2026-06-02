@@ -18,6 +18,14 @@ services:
         condition: service_healthy
     networks:
       - marketvoice-network
+      - n8n_default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.marketvoice.rule=Host(`voice.restaurantiq.ai`)"
+      - "traefik.http.routers.marketvoice.entrypoints=websecure"
+      - "traefik.http.routers.marketvoice.tls.certresolver=mytlschallenge"
+      - "traefik.http.services.marketvoice.loadbalancer.server.port=3031"
+      - "traefik.http.routers.marketvoice.service=marketvoice"
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:3031/api/health || exit 1"]
       interval: 30s
@@ -63,3 +71,5 @@ networks:
   marketvoice-network:
     name: marketvoice-network
     driver: bridge
+  n8n_default:
+    external: true
