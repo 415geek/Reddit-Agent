@@ -9,6 +9,7 @@ const PUBLIC_PATHS = [
   // n8n webhook 路由:自身用 x-webhook-secret 校验(middleware 不拦,路由内必须校验)
   '/api/pipeline',
   '/api/hooks',
+  '/api/admin',
   // 资产与封面渲染:路由内校验 cookie 或 token
   '/api/assets',
   '/covers',

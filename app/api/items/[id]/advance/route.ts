@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { advanceItem } from '@/lib/agents/pipeline'
 
-export const maxDuration = 300
+export const maxDuration = 60
 
 /** 看板手动推进一个阶段(不依赖 n8n 也能生产) */
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {

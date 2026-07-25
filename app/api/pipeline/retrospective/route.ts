@@ -3,7 +3,7 @@ import { checkWebhookSecret } from '@/lib/webhook'
 import { runRetrospective } from '@/lib/agents/retrospective'
 import { sendTelegramMessage } from '@/lib/providers/telegram'
 
-export const maxDuration = 300
+export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
   const denied = checkWebhookSecret(req)

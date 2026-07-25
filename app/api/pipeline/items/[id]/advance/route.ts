@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { checkWebhookSecret } from '@/lib/webhook'
 import { advanceItem } from '@/lib/agents/pipeline'
 
-export const maxDuration = 300
+export const maxDuration = 60
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const denied = checkWebhookSecret(req)

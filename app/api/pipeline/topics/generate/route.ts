@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { checkWebhookSecret } from '@/lib/webhook'
 import { generateAndScoreTopics } from '@/lib/agents/topics'
 
-export const maxDuration = 300
+export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
   const denied = checkWebhookSecret(req)
