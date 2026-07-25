@@ -199,6 +199,9 @@ async function runCompose(item: ItemWithRelations) {
   return { path: final.path }
 }
 
+/** 质检不通过时最多返工几次(每次带着质检意见重写脚本) */
+const MAX_SCRIPT_REVISIONS = 2
+
 async function runQc(item: ItemWithRelations) {
   const script = item.scripts[0]
   if (!script) throw new Error('缺少脚本,无法质检')
@@ -215,10 +218,50 @@ async function runQc(item: ItemWithRelations) {
     where: { id: script.id },
     data: { qcReport: report as unknown as object, status: report.passed ? 'passed_qc' : 'failed_qc' },
   })
-  if (!report.passed) {
-    throw new Error(`质检未通过:${report.notes || [...report.typos, ...report.complianceIssues].join('; ')}`)
+  if (report.passed) return { passed: true, version: script.version }
+
+  const issues = [report.notes, ...report.typos, ...report.complianceIssues].filter(Boolean).join('\n- ')
+
+  // 已经返工到上限:停在 qc,交给人工处理(看板会显示质检意见)
+  if (script.version > MAX_SCRIPT_REVISIONS) {
+    throw new Error(`质检连续${script.version}次未通过,需人工介入:${issues}`)
   }
-  return { passed: true }
+
+  // 带着质检意见重写脚本,下一次 advance 会对新版本重新质检
+  if (!item.research) throw new Error('缺少研究资料,无法返工')
+  const revised = await generateJSON<ScriptOutput>({
+    system: SCRIPTWRITER_SYSTEM,
+    user:
+      scriptwriterUser(item.title, {
+        core_claim: item.research.coreClaim,
+        supporting_facts: item.research.supportingFacts,
+        usable_examples: item.research.usableExamples,
+        risk_notes: item.research.riskNotes,
+      }) +
+      `\n\n上一版脚本没有通过质检,必须修正以下问题后重写(不要重复同样的错误):\n- ${issues}\n\n` +
+      `特别注意:案例里的品类、价格、数字必须来自上面的研究资料;资料里没有的,改成泛化表述或直接换成资料里有的例子,不要自己编。`,
+    maxTokens: 4096,
+    mockKey: 'script',
+    mockParams: { title: item.title },
+  })
+  await prisma.script.create({
+    data: {
+      contentItemId: item.id,
+      version: script.version + 1,
+      beats: revised.beats as unknown as object,
+      fullText: revised.fullText,
+      durationEstSec: revised.durationEstSec,
+    },
+  })
+  await prisma.contentItem.update({
+    where: { id: item.id },
+    data: {
+      coverTitleLines: revised.coverTitleLines?.slice(0, 3) ?? item.coverTitleLines,
+      coverTemplate: ['truth', 'counter', 'control'].includes(revised.coverTemplate) ? revised.coverTemplate : item.coverTemplate,
+    },
+  })
+  // 停在 qc 阶段,下一次 advance 会质检新版本(不算失败,n8n 循环继续)
+  return { passed: false, stayInStage: true, revisedTo: script.version + 1, issues }
 }
 
 const HANDLERS: Record<Stage, (item: ItemWithRelations) => Promise<Record<string, unknown>>> = {
@@ -249,6 +292,14 @@ export async function advanceItem(itemId: string) {
   await logEvent({ contentItemId: itemId, stage, status: 'started' })
   try {
     const detail = await HANDLERS[stage](item)
+
+    // 阶段要求留在原地(如质检返工:已重写脚本,下一次 advance 复检新版本)
+    if (detail.stayInStage) {
+      await prisma.contentItem.update({ where: { id: itemId }, data: { stageEnteredAt: new Date() } })
+      await logEvent({ contentItemId: itemId, stage, status: 'succeeded', detail })
+      return { itemId, stage, done: false, retried: true, detail }
+    }
+
     const nextStage = STAGES[STAGES.indexOf(stage) + 1]
     await prisma.contentItem.update({
       where: { id: itemId },

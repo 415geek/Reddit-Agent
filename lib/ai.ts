@@ -24,7 +24,10 @@ async function callOnce(system: string, user: string, maxTokens: number): Promis
   const res = await client().messages.create({
     model: DEFAULT_MODEL,
     max_tokens: maxTokens,
-    temperature: 0.7,
+    // claude-sonnet-5 起移除了 temperature/top_p/top_k(传了直接 400),用提示词控制风格
+    // thinking 与正文共用 max_tokens;serverless 有 60 秒函数上限,长 JSON 容易被思考挤掉,
+    // 故这里关闭思考换取稳定与速度。自托管(无 60s 限制)可改成 { type: 'adaptive' } 提升质量。
+    thinking: { type: 'disabled' },
     system,
     messages: [{ role: 'user', content: user }],
   })

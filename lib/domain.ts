@@ -1,13 +1,14 @@
 // 领域类型与常量:阶段机、分类、封面模板、评分维度
 
+// 质检紧跟脚本、在分镜之前:不合规的脚本要在花钱生成图片/配音之前就被拦下并返工
 export const STAGES = [
   'research',
   'script',
+  'qc',
   'storyboard',
   'assets',
   'voiceover',
   'compose',
-  'qc',
   'awaiting_approval',
 ] as const
 export type Stage = (typeof STAGES)[number]
