@@ -5,14 +5,16 @@ FROM base AS deps
 RUN apk add --no-cache libc6-compat openssl
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci --only=production && npm cache clean --force
+RUN npm ci --only=production --ignore-scripts && npm cache clean --force
 
 # Build stage
 FROM base AS builder
 RUN apk add --no-cache libc6-compat openssl
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci
+# --ignore-scripts:此时源码还没 COPY 进来,postinstall 的 prisma generate 会找不到 schema;
+# 下面 COPY 完源码后再显式执行一次
+RUN npm ci --ignore-scripts
 COPY . .
 RUN ./node_modules/.bin/prisma generate
 RUN npm run build
