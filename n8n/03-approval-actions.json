@@ -1,0 +1,61 @@
+{
+  "name": "BizBrain 03 — Telegram 审批回调",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["callback_query"],
+        "additionalFields": {}
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0],
+      "credentials": {
+        "telegramApi": { "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID", "name": "BizBrain Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.FACTORY_APP_URL }}/api/hooks/telegram",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-webhook-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ callbackData: $json.callback_query.data, decidedBy: $json.callback_query.from.username }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "forward-decision",
+      "name": "转发审批决定",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/answerCallbackQuery",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ callback_query_id: $('Telegram Trigger').first().json.callback_query.id, text: '已处理 ✓' }) }}",
+        "options": { "timeout": 15000 }
+      },
+      "id": "answer-callback",
+      "name": "确认按钮点击",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": { "main": [[{ "node": "转发审批决定", "type": "main", "index": 0 }]] },
+    "转发审批决定": { "main": [[{ "node": "确认按钮点击", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

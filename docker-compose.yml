@@ -1,11 +1,11 @@
 version: "3.9"
 
 services:
-  marketvoice-app:
+  bizbrain-app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: marketvoice-app
+    container_name: bizbrain-app
     restart: unless-stopped
     ports:
       - "127.0.0.1:3031:3031"
@@ -13,19 +13,22 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3031
+      - DATA_DIR=/app/data
+    volumes:
+      - bizbrain-data:/app/data
     depends_on:
-      marketvoice-postgres:
+      bizbrain-postgres:
         condition: service_healthy
     networks:
-      - marketvoice-network
+      - bizbrain-network
       - n8n_default
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.marketvoice.rule=Host(`voice.restaurantiq.ai`)"
-      - "traefik.http.routers.marketvoice.entrypoints=websecure"
-      - "traefik.http.routers.marketvoice.tls.certresolver=mytlschallenge"
-      - "traefik.http.services.marketvoice.loadbalancer.server.port=3031"
-      - "traefik.http.routers.marketvoice.service=marketvoice"
+      - "traefik.http.routers.bizbrain.rule=Host(`${FACTORY_DOMAIN}`)"
+      - "traefik.http.routers.bizbrain.entrypoints=websecure"
+      - "traefik.http.routers.bizbrain.tls.certresolver=mytlschallenge"
+      - "traefik.http.services.bizbrain.loadbalancer.server.port=3031"
+      - "traefik.http.routers.bizbrain.service=bizbrain"
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:3031/api/health || exit 1"]
       interval: 30s
@@ -33,43 +36,37 @@ services:
       retries: 3
       start_period: 40s
 
-  marketvoice-postgres:
+  bizbrain-postgres:
     image: postgres:16-alpine
-    container_name: marketvoice-postgres
+    container_name: bizbrain-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: marketvoice
-      POSTGRES_USER: marketvoice_user
+      POSTGRES_DB: bizbrain
+      POSTGRES_USER: bizbrain_user
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME_PASSWORD}
     volumes:
-      - marketvoice-pgdata:/var/lib/postgresql/data
+      - bizbrain-pgdata:/var/lib/postgresql/data
     networks:
-      - marketvoice-network
+      - bizbrain-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U marketvoice_user -d marketvoice"]
+      test: ["CMD-SHELL", "pg_isready -U bizbrain_user -d bizbrain"]
       interval: 10s
       timeout: 5s
       retries: 5
-    # PostgreSQL NOT exposed publicly — only accessible within network
+    # PostgreSQL 不对外暴露,仅内部网络可达
 
-  marketvoice-redis:
-    image: redis:7-alpine
-    container_name: marketvoice-redis
-    restart: unless-stopped
-    volumes:
-      - marketvoice-redis-data:/data
-    networks:
-      - marketvoice-network
+  # 未来接 Remotion/FFmpeg 合成 worker 时,在此追加 bizbrain-worker 服务
+  # (共享 bizbrain-data volume,消费 compose 阶段任务)。见 README Phase 2。
 
 volumes:
-  marketvoice-pgdata:
-    name: marketvoice-pgdata
-  marketvoice-redis-data:
-    name: marketvoice-redis-data
+  bizbrain-pgdata:
+    name: bizbrain-pgdata
+  bizbrain-data:
+    name: bizbrain-data
 
 networks:
-  marketvoice-network:
-    name: marketvoice-network
+  bizbrain-network:
+    name: bizbrain-network
     driver: bridge
   n8n_default:
     external: true

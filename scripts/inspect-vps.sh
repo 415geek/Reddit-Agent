@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# MarketVoice — VPS Pre-Deployment Inspection
+# BizBrain — VPS Pre-Deployment Inspection
 # Run this FIRST on the VPS before deploying anything
 set -euo pipefail
 
-echo "=== MarketVoice VPS Inspection ==="
+echo "=== BizBrain VPS Inspection ==="
 echo "Date: $(date)"
 echo ""
 
@@ -55,8 +55,8 @@ nginx -t 2>&1 || true
 echo ""
 echo "--- Existing projects check ---"
 echo "n8n:" && docker ps --format "{{.Names}}" | grep -i n8n || echo "  not found"
-echo "leads.maxwelllai.com:" && docker ps --format "{{.Names}}" | grep -i leads || echo "  not found"
+echo "n8n:" && docker ps --format "{{.Names}}" | grep -i leads || echo "  not found"
 
 echo ""
 echo "--- Inspection complete ---"
-echo "Review output above before deploying MarketVoice"
+echo "Review output above before deploying BizBrain"

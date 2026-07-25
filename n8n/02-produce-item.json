@@ -1,0 +1,130 @@
+{
+  "name": "BizBrain 02 — 生产一条内容",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bizbrain-produce",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-produce",
+      "name": "Webhook 触发",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "bizbrain-produce"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.FACTORY_APP_URL }}/api/pipeline/items",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-webhook-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ topicId: $json.body?.topicId, limit: 1 }) }}",
+        "options": { "timeout": 60000 }
+      },
+      "id": "create-item",
+      "name": "创建生产单元",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.first().json.items || []\nif (items.length === 0) { throw new Error('没有可入队的选题(评分不足70或队列为空)') }\nreturn [{ json: { itemId: items[0].id, title: items[0].title } }]"
+      },
+      "id": "extract-item",
+      "name": "取 itemId",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.FACTORY_APP_URL }}/api/pipeline/items/{{ $json.itemId }}/advance",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-webhook-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }
+          ]
+        },
+        "options": { "timeout": 300000 }
+      },
+      "id": "advance-stage",
+      "name": "推进一个阶段",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "version": 2 },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.done }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-done",
+      "name": "到达待审批?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [880, 0]
+    },
+    {
+      "parameters": { "amount": 2 },
+      "id": "wait-between",
+      "name": "间隔2秒",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [880, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.FACTORY_APP_URL }}/api/pipeline/items/{{ $json.itemId }}/notify",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-webhook-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "id": "notify-approval",
+      "name": "发送审批卡片",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 0]
+    }
+  ],
+  "connections": {
+    "Webhook 触发": { "main": [[{ "node": "创建生产单元", "type": "main", "index": 0 }]] },
+    "创建生产单元": { "main": [[{ "node": "取 itemId", "type": "main", "index": 0 }]] },
+    "取 itemId": { "main": [[{ "node": "推进一个阶段", "type": "main", "index": 0 }]] },
+    "推进一个阶段": { "main": [[{ "node": "到达待审批?", "type": "main", "index": 0 }]] },
+    "到达待审批?": {
+      "main": [
+        [{ "node": "发送审批卡片", "type": "main", "index": 0 }],
+        [{ "node": "间隔2秒", "type": "main", "index": 0 }]
+      ]
+    },
+    "间隔2秒": { "main": [[{ "node": "推进一个阶段", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

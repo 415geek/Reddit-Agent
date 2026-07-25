@@ -1,193 +1,158 @@
 #!/usr/bin/env bash
-# MarketVoice — VPS Deployment Script
-# Run on VPS as root: bash deploy-vps.sh
-# Before running, set the environment variables below or export them in your shell.
+# 生意脑回路(BizBrain)— VPS 部署脚本
+# 在 VPS 上以 root 运行: bash deploy-vps.sh
+# 运行前先 export 下方必填环境变量。
 set -euo pipefail
 
-APP_DIR="/opt/marketvoice/app"
-BACKUP_DIR="/opt/marketvoice/backups"
-BRANCH="claude/restaurant-intelligence-agent-HQMW9"
+APP_DIR="/opt/bizbrain/app"
+BACKUP_DIR="/opt/bizbrain/backups"
+BRANCH="claude/north-america-project-content-0jek2g"
 REPO_URL="https://github.com/415geek/Reddit-Agent.git"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
-# ── Required credentials (set these before running) ───────────────────────────
-# Export these variables in your shell, or edit this file directly:
+# ── 必填凭据 ──────────────────────────────────────────────────────────────────
 DB_PASSWORD="${DB_PASSWORD:?Set DB_PASSWORD}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}"
 JWT_SECRET="${JWT_SECRET:?Set JWT_SECRET}"
 WEBHOOK_SECRET="${WEBHOOK_SECRET:?Set WEBHOOK_SECRET}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:?Set ANTHROPIC_API_KEY}"
+# ── 选填 ──────────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
 TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
-APP_URL="${APP_URL:-https://voice.restaurantiq.ai}"
+FACTORY_DOMAIN="${FACTORY_DOMAIN:-factory.example.com}"
+APP_URL="${APP_URL:-https://${FACTORY_DOMAIN}}"
 ADMIN_USER="${ADMIN_USER:-admin}"
+MEDIA_PROVIDER="${MEDIA_PROVIDER:-mock}"
+ARK_API_KEY="${ARK_API_KEY:-}"
+DOUBAO_TTS_APPID="${DOUBAO_TTS_APPID:-}"
+DOUBAO_TTS_TOKEN="${DOUBAO_TTS_TOKEN:-}"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
-echo "=== MarketVoice VPS Deployment — ${TIMESTAMP} ==="
+echo "=== BizBrain VPS 部署 — ${TIMESTAMP} ==="
 
-# ── Safety checks ─────────────────────────────────────────────────────────────
-info "Running pre-deployment safety checks..."
-
-command -v docker &>/dev/null || error "Docker is not installed"
-info "Docker available ✓"
+# ── 安全检查 ──────────────────────────────────────────────────────────────────
+command -v docker &>/dev/null || error "Docker 未安装"
+info "Docker 可用 ✓"
 
 if ss -tulpn 2>/dev/null | grep -q ":3031 "; then
-  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "marketvoice-app"; then
-    error "Port 3031 is occupied by a non-MarketVoice process."
+  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qE "bizbrain-app|marketvoice-app"; then
+    error "端口 3031 被其他进程占用。"
   fi
-  warn "Port 3031 already used by MarketVoice container — will be replaced."
+  warn "端口 3031 已被本项目旧容器占用 — 将替换。"
 fi
-info "Port safety check passed ✓"
+info "端口检查通过 ✓"
 
-# ── Create directories ────────────────────────────────────────────────────────
-info "Preparing directories..."
 mkdir -p "${APP_DIR}" "${BACKUP_DIR}/db"
 
-# ── Clone or update repo ──────────────────────────────────────────────────────
-info "Fetching latest code from GitHub..."
+# ── 拉代码 ────────────────────────────────────────────────────────────────────
+info "拉取最新代码..."
 if [ -d "${APP_DIR}/.git" ]; then
   cd "${APP_DIR}"
   git fetch origin "${BRANCH}"
   git checkout "${BRANCH}"
   git pull origin "${BRANCH}"
-  info "Repository updated ✓"
 else
   git clone --branch "${BRANCH}" "${REPO_URL}" "${APP_DIR}"
   cd "${APP_DIR}"
-  info "Repository cloned ✓"
 fi
+info "代码就绪 ✓"
 
-# ── Write .env ────────────────────────────────────────────────────────────────
-info "Writing .env with production credentials..."
-
+# ── 写 .env ───────────────────────────────────────────────────────────────────
+info "写入生产 .env ..."
 cat > "${APP_DIR}/.env" <<EOF
 NODE_ENV=production
 
-MARKETVOICE_APP_PORT=3031
-MARKETVOICE_APP_URL=${APP_URL}
+FACTORY_APP_PORT=3031
+FACTORY_APP_URL=${APP_URL}
+FACTORY_DOMAIN=${FACTORY_DOMAIN}
 
-DATABASE_URL=postgresql://marketvoice_user:${DB_PASSWORD}@marketvoice-postgres:5432/marketvoice
+DATABASE_URL=postgresql://bizbrain_user:${DB_PASSWORD}@bizbrain-postgres:5432/bizbrain
 POSTGRES_PASSWORD=${DB_PASSWORD}
 
-AI_PROVIDER=anthropic
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-
-MARKETVOICE_ADMIN_USER=${ADMIN_USER}
-MARKETVOICE_ADMIN_PASSWORD=${ADMIN_PASSWORD}
+FACTORY_ADMIN_USER=${ADMIN_USER}
+FACTORY_ADMIN_PASSWORD=${ADMIN_PASSWORD}
 JWT_SECRET=${JWT_SECRET}
 
 N8N_WEBHOOK_SECRET=${WEBHOOK_SECRET}
-N8N_INGEST_URL=${APP_URL}/api/ingest
+
+ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+ANTHROPIC_MODEL=claude-sonnet-5
+AI_MOCK=
+
+MEDIA_PROVIDER=${MEDIA_PROVIDER}
+ARK_API_KEY=${ARK_API_KEY}
+ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+SEEDREAM_MODEL=doubao-seedream-4-0-250828
+SEEDANCE_MODEL=doubao-seedance-1-0-pro-250528
+DOUBAO_TTS_APPID=${DOUBAO_TTS_APPID}
+DOUBAO_TTS_TOKEN=${DOUBAO_TTS_TOKEN}
+DOUBAO_TTS_CLUSTER=volcano_tts
+DOUBAO_TTS_VOICE=zh_male_yuanboxiaoshu_moon_bigtts
+
+DOUYIN_CLIENT_KEY=
+DOUYIN_CLIENT_SECRET=
 
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+
+DATA_DIR=/app/data
 EOF
-
 chmod 600 "${APP_DIR}/.env"
-info ".env created ✓"
+info ".env 完成 ✓"
 
-# ── Docker: build and start ───────────────────────────────────────────────────
-info "Building Docker image (this may take a few minutes)..."
+# ── 构建与启动 ────────────────────────────────────────────────────────────────
+info "构建 Docker 镜像(需要几分钟)..."
 cd "${APP_DIR}"
 docker compose build --no-cache
-info "Build complete ✓"
-
-info "Starting containers..."
 docker compose up -d
 
-info "Waiting for PostgreSQL to be ready..."
+info "等待 PostgreSQL 就绪..."
 for i in $(seq 1 30); do
-  if docker compose exec -T marketvoice-postgres pg_isready -U marketvoice_user -d marketvoice &>/dev/null 2>&1; then
-    info "PostgreSQL ready ✓"
+  if docker compose exec -T bizbrain-postgres pg_isready -U bizbrain_user -d bizbrain &>/dev/null 2>&1; then
+    info "PostgreSQL 就绪 ✓"
     break
   fi
-  if [ "$i" -eq 30 ]; then
-    error "PostgreSQL did not become ready in 60 seconds."
-  fi
+  [ "$i" -eq 30 ] && error "PostgreSQL 60秒内未就绪。"
   sleep 2
 done
 
-# ── Migrations and seed ───────────────────────────────────────────────────────
-info "Running database migrations..."
-docker compose exec -T marketvoice-app ./node_modules/.bin/prisma migrate deploy
-info "Migrations applied ✓"
+# ── 迁移与种子 ────────────────────────────────────────────────────────────────
+info "执行数据库迁移..."
+docker compose exec -T bizbrain-app node ./node_modules/prisma/build/index.js migrate deploy
+info "写入选题库种子(约127条,北美案例加重)..."
+docker compose exec -T bizbrain-app ./node_modules/.bin/tsx prisma/seed.ts
+info "种子完成 ✓"
 
-info "Seeding Reddit sources (28 subreddits)..."
-docker compose exec -T marketvoice-app ./node_modules/.bin/tsx prisma/seed.ts
-info "Seed complete ✓"
-
-# ── Nginx ─────────────────────────────────────────────────────────────────────
-info "Configuring Nginx..."
-
-if [ -d /etc/nginx/sites-available ]; then
-  cp -a /etc/nginx/sites-available/ "${BACKUP_DIR}/nginx-sites-available-${TIMESTAMP}/"
-  info "Nginx configs backed up ✓"
-fi
-
-cp "${APP_DIR}/nginx/marketvoice.conf" /etc/nginx/sites-available/marketvoice.conf
-
-if [ ! -L /etc/nginx/sites-enabled/marketvoice.conf ]; then
-  ln -s /etc/nginx/sites-available/marketvoice.conf /etc/nginx/sites-enabled/marketvoice.conf
-fi
-
-if nginx -t; then
-  systemctl reload nginx
-  info "Nginx reloaded ✓"
-else
-  warn "Nginx config test failed — restoring backup"
-  cp -a "${BACKUP_DIR}/nginx-sites-available-${TIMESTAMP}/." /etc/nginx/sites-available/
-  rm -f /etc/nginx/sites-enabled/marketvoice.conf
-  nginx -t && systemctl reload nginx || true
-  error "Nginx setup failed. Application is running on port 3031 but not proxied."
-fi
-
-# ── Verify ────────────────────────────────────────────────────────────────────
-info "Verifying deployment..."
+# ── 验证(Traefik 负责 HTTPS,不再配置 nginx) ────────────────────────────────
 sleep 6
-
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3031/api/health 2>/dev/null || echo "000")
 if [ "$HTTP_CODE" = "200" ]; then
-  info "Health check: HTTP 200 OK ✓"
+  info "健康检查 HTTP 200 ✓"
 else
-  warn "Health check returned HTTP ${HTTP_CODE}"
-  warn "Showing last 40 lines of app logs:"
-  docker compose logs --tail=40 marketvoice-app
+  warn "健康检查返回 HTTP ${HTTP_CODE},最近日志:"
+  docker compose logs --tail=40 bizbrain-app
 fi
 
-# ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "============================================================"
-echo "  MarketVoice Deployment Complete!"
+echo "  生意脑回路(BizBrain)部署完成!"
 echo "============================================================"
 echo ""
-echo "Dashboard (direct):  http://$(hostname -I | awk '{print $1}'):3031/login"
-echo "Dashboard (domain):  ${APP_URL}/login  (after DNS + SSL)"
-echo ""
-echo "Login: ${ADMIN_USER} / ${ADMIN_PASSWORD}"
+echo "后台(直连): http://$(hostname -I | awk '{print $1}'):3031/login"
+echo "后台(域名): ${APP_URL}/login  (DNS 指向本机后由 Traefik 自动签发证书)"
+echo "登录: ${ADMIN_USER} / <你设置的密码>"
 echo ""
 echo "──────────────────────────────────────────────────────────"
-echo "  NEXT STEPS"
+echo "  后续步骤"
 echo "──────────────────────────────────────────────────────────"
-echo ""
-echo "1. DNS — Add A record: voice.restaurantiq.ai → $(curl -s ifconfig.me 2>/dev/null || echo 'YOUR_SERVER_IP')"
-echo "   Verify: dig +short voice.restaurantiq.ai"
-echo ""
-echo "2. SSL (after DNS propagates):"
-echo "   sudo certbot --nginx -d voice.restaurantiq.ai"
-echo ""
-echo "3. n8n Workflow:"
-echo "   a. Open n8n at http://YOUR_SERVER_IP:5678"
-echo "   b. Import: ${APP_DIR}/n8n/marketvoice-workflow.json"
-echo "   c. Add PostgreSQL credential (host: marketvoice-postgres, db: marketvoice, user: marketvoice_user)"
-echo "   d. Settings > Variables > add ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,"
-echo "      N8N_INGEST_URL, N8N_WEBHOOK_SECRET"
-echo "   e. Set PostgreSQL credential on both DB query nodes and activate"
-echo ""
-echo "4. Optional — backup cron:"
+echo "1. DNS:${FACTORY_DOMAIN} → 本机IP(Traefik 自动 HTTPS,无需 nginx/certbot)"
+echo "2. n8n:导入 ${APP_DIR}/n8n/ 下的 5 个工作流,"
+echo "   在 n8n 环境变量里配置 FACTORY_APP_URL、N8N_WEBHOOK_SECRET、TELEGRAM_BOT_TOKEN、TELEGRAM_CHAT_ID"
+echo "   03 工作流需要创建 Telegram 凭据并替换占位 credential id"
+echo "3. 备份 cron:"
 echo "   echo '0 2 * * * bash ${APP_DIR}/scripts/backup-db.sh >> ${BACKUP_DIR}/backup.log 2>&1' | crontab -"
 echo ""

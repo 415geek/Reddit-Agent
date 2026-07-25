@@ -1,140 +1,110 @@
-import { Suspense } from 'react'
-import { BarChart3, TrendingUp, MapPin, AlertCircle, Target } from 'lucide-react'
+export const dynamic = 'force-dynamic'
+
+import { prisma } from '@/lib/prisma'
 import { StatCard } from '@/components/dashboard/stat-card'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { prisma } from '@/lib/prisma'
-import { IntentBadge } from '@/components/dashboard/intent-badge'
-import { ScoreBar } from '@/components/dashboard/score-bar'
+import { Badge } from '@/components/ui/badge'
+import { Lightbulb, Factory, CheckCircle2, Send, Eye } from 'lucide-react'
+import { STAGE_LABELS } from '@/lib/domain'
 import { formatRelative } from '@/lib/utils'
-import Link from 'next/link'
-import { OverviewChart } from './overview-chart'
-
-async function getOverviewData() {
-  const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000)
-
-  const [total, relevant, highIntent, totalYest, relevantYest] = await Promise.all([
-    prisma.marketvoicePost.count({ where: { createdAt: { gte: since7d } } }),
-    prisma.marketvoicePost.count({ where: { createdAt: { gte: since7d }, isRelevant: true } }),
-    prisma.marketvoicePost.count({ where: { createdAt: { gte: since7d }, buyingIntent: 'high' } }),
-    prisma.marketvoicePost.count({ where: { createdAt: { gte: since24h } } }),
-    prisma.marketvoicePost.count({ where: { createdAt: { gte: since24h }, isRelevant: true } }),
-  ])
-
-  const cityRows = await prisma.marketvoicePost.findMany({
-    where: { createdAt: { gte: since7d }, isRelevant: true, detectedCity: { not: null } },
-    select: { detectedCity: true },
-  })
-
-  const avgScore = await prisma.marketvoicePost.aggregate({
-    where: { createdAt: { gte: since7d }, isRelevant: true },
-    _avg: { leadScore: true },
-  })
-
-  const recentLeads = await prisma.marketvoicePost.findMany({
-    where: { createdAt: { gte: since7d }, buyingIntent: 'high' },
-    orderBy: [{ leadScore: 'desc' }, { postedAt: 'desc' }],
-    take: 8,
-    select: { id: true, title: true, subreddit: true, detectedCity: true, detectedState: true, leadScore: true, buyingIntent: true, summary: true, postedAt: true },
-  })
-
-  // Chart trend (7 days)
-  const trendData = []
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000)
-    d.setHours(0, 0, 0, 0)
-    const end = new Date(d); end.setHours(23, 59, 59, 999)
-    const count = await prisma.marketvoicePost.count({ where: { createdAt: { gte: d, lte: end }, isRelevant: true } })
-    trendData.push({ date: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), count })
-  }
-
-  return {
-    total, relevant, highIntent, totalYest, relevantYest,
-    uniqueCities: new Set(cityRows.map(r => r.detectedCity)).size,
-    avgScore: Math.round((avgScore._avg.leadScore || 0) * 10) / 10,
-    recentLeads, trendData,
-  }
-}
+import { ProductionChart } from './production-chart'
 
 export default async function OverviewPage() {
-  const data = await getOverviewData()
+  const [topicPool, inProduction, awaitingApproval, published, observing, recentEvents, recentItems] = await Promise.all([
+    prisma.topic.count({ where: { status: { in: ['idea', 'scored'] } } }),
+    prisma.contentItem.count({ where: { stage: { in: ['research', 'script', 'storyboard', 'assets', 'voiceover', 'compose', 'qc'] } } }),
+    prisma.contentItem.count({ where: { stage: 'awaiting_approval' } }),
+    prisma.contentItem.count({ where: { stage: 'published' } }),
+    prisma.publication.count({ where: { publishedAt: { gte: new Date(Date.now() - 7 * 86400000) } } }),
+    prisma.pipelineEvent.findMany({ orderBy: { createdAt: 'desc' }, take: 12, include: { contentItem: true } }),
+    prisma.contentItem.findMany({ orderBy: { updatedAt: 'desc' }, take: 8, include: { topic: true } }),
+  ])
+
+  // 近7天各日产出(进入待审批的数量)
+  const since = new Date(Date.now() - 7 * 86400000)
+  const produced = await prisma.contentItem.findMany({
+    where: { producedAt: { gte: since } },
+    select: { producedAt: true },
+  })
+  const byDay = new Map<string, number>()
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000)
+    byDay.set(d.toISOString().slice(5, 10), 0)
+  }
+  for (const p of produced) {
+    if (!p.producedAt) continue
+    const key = p.producedAt.toISOString().slice(5, 10)
+    if (byDay.has(key)) byDay.set(key, (byDay.get(key) || 0) + 1)
+  }
+  const chartData = Array.from(byDay.entries()).map(([date, count]) => ({ date, count }))
+
   return (
-    <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">National Overview</h1>
-        <p className="text-sm text-gray-500 mt-1">Last 7 days — Restaurant POS market signals from Reddit</p>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">总览</h1>
+        <p className="text-sm text-gray-500 mt-1">内容工厂运行状态 · 85% 自动生产 + 15% 人工审批</p>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
-        <StatCard title="Posts Scanned" value={data.total.toLocaleString()} icon={<BarChart3 className="w-5 h-5" />} color="blue" />
-        <StatCard title="Relevant Posts" value={data.relevant.toLocaleString()} icon={<Target className="w-5 h-5" />} color="green" />
-        <StatCard title="High-Intent Leads" value={data.highIntent.toLocaleString()} icon={<TrendingUp className="w-5 h-5" />} color="red" />
-        <StatCard title="Cities Covered" value={data.uniqueCities.toLocaleString()} icon={<MapPin className="w-5 h-5" />} color="purple" />
-        <StatCard title="Avg Lead Score" value={data.avgScore} icon={<AlertCircle className="w-5 h-5" />} color="yellow" />
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <StatCard title="选题池" value={topicPool} icon={<Lightbulb className="w-6 h-6" />} color="yellow" />
+        <StatCard title="制作中" value={inProduction} icon={<Factory className="w-6 h-6" />} color="blue" />
+        <StatCard title="待审批" value={awaitingApproval} icon={<CheckCircle2 className="w-6 h-6" />} color="red" />
+        <StatCard title="已发布" value={published} icon={<Send className="w-6 h-6" />} color="green" />
+        <StatCard title="近7天发布" value={observing} icon={<Eye className="w-6 h-6" />} color="purple" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        <div className="lg:col-span-2">
-          <Card>
-            <CardHeader><CardTitle>Relevant Posts Trend (7 days)</CardTitle></CardHeader>
-            <CardContent>
-              <OverviewChart data={data.trendData} />
-            </CardContent>
-          </Card>
-        </div>
+      <div className="grid lg:grid-cols-2 gap-6">
         <Card>
-          <CardHeader><CardTitle>Today's Activity</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-base">近7天产出(到达待审批)</CardTitle>
+          </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">Posts scanned</span>
-                <span className="font-semibold">{data.totalYest}</span>
+            <ProductionChart data={chartData} />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">最新内容</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {recentItems.length === 0 && <p className="text-sm text-gray-400">还没有生产任务。去选题库把选题入队。</p>}
+            {recentItems.map((item) => (
+              <div key={item.id} className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">{item.title}</p>
+                  <p className="text-xs text-gray-400">{formatRelative(item.updatedAt)}</p>
+                </div>
+                <Badge variant={item.stage === 'awaiting_approval' ? 'high' : item.stage === 'published' ? 'low' : 'default'}>
+                  {STAGE_LABELS[item.stage] ?? item.stage}
+                </Badge>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">Relevant posts</span>
-                <span className="font-semibold text-green-600">{data.relevantYest}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">High-intent leads</span>
-                <span className="font-semibold text-red-600">{data.highIntent}</span>
-              </div>
-            </div>
+            ))}
           </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>Recent High-Intent Leads</CardTitle>
-            <Link href="/dashboard/leads" className="text-sm text-blue-600 hover:underline">View all →</Link>
-          </div>
+          <CardTitle className="text-base">流水线事件</CardTitle>
         </CardHeader>
-        <CardContent className="p-0">
-          <div className="divide-y">
-            {data.recentLeads.length === 0 && (
-              <p className="p-6 text-sm text-gray-500 text-center">No high-intent leads yet. Make sure the n8n workflow is running.</p>
-            )}
-            {data.recentLeads.map(lead => (
-              <Link key={lead.id} href={`/dashboard/posts/${lead.id}`} className="block px-6 py-4 hover:bg-gray-50 transition-colors">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-gray-900 truncate">{lead.title}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      r/{lead.subreddit}
-                      {lead.detectedCity && ` · ${lead.detectedCity}${lead.detectedState ? `, ${lead.detectedState}` : ''}`}
-                      {' · '}{formatRelative(lead.postedAt)}
-                    </p>
-                    {lead.summary && <p className="text-sm text-gray-600 mt-1 line-clamp-1">{lead.summary}</p>}
-                  </div>
-                  <div className="flex-shrink-0 flex flex-col items-end gap-1">
-                    <IntentBadge intent={lead.buyingIntent || 'none'} />
-                    <div className="w-20"><ScoreBar score={lead.leadScore} /></div>
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
+        <CardContent className="space-y-2">
+          {recentEvents.length === 0 && <p className="text-sm text-gray-400">暂无事件。</p>}
+          {recentEvents.map((e) => (
+            <div key={e.id} className="flex items-center gap-3 text-sm">
+              <span
+                className={
+                  e.status === 'failed' ? 'text-red-500' : e.status === 'succeeded' ? 'text-green-600' : 'text-gray-400'
+                }
+              >
+                ●
+              </span>
+              <span className="text-gray-600 w-24 flex-shrink-0">{STAGE_LABELS[e.stage] ?? e.stage}</span>
+              <span className="text-gray-900 truncate flex-1">{e.contentItem?.title ?? '—'}</span>
+              {e.error && <span className="text-xs text-red-500 truncate max-w-xs">{e.error}</span>}
+              <span className="text-xs text-gray-400 flex-shrink-0">{formatRelative(e.createdAt)}</span>
+            </div>
+          ))}
         </CardContent>
       </Card>
     </div>

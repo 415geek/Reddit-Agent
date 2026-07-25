@@ -7,78 +7,242 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model MarketvoiceSource {
+// ── 系列(强化"追更感":北美商业解剖、免费的代价…) ─────────────────────────────
+
+model Series {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  topics Topic[]
+
+  @@map("bb_series")
+}
+
+// ── 选题 ──────────────────────────────────────────────────────────────────────
+
+model Topic {
   id         String   @id @default(cuid())
-  sourceName String
-  subreddit  String
-  rssUrl     String
-  city       String?
-  state      String?
-  region     String?
-  sourceType String   // city | industry | competitor | national
-  priority   Int      @default(5)
-  active     Boolean  @default(true)
+  title      String
+  hook       String? // 一句话冲突点:"你以为A,其实B"
+  category   String // behavioral_econ | marketing_psych | ai_money | business_case
+  region     String   @default("global") // north_america | china | global
+  seriesId   String?
+  source     String   @default("seed") // seed | daily | sequel | manual
+  status     String   @default("idea") // idea | scored | rejected | queued | in_production | produced | published | retired
+  scoreTotal Float?
+  scores     Json? // {conflict,relevance,emotion,freshness,story,credibility,conversion}
+  riskFlags  String[] @default([])
+  notes      String?  @db.Text
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  posts MarketvoicePost[]
+  series Series?       @relation(fields: [seriesId], references: [id])
+  items  ContentItem[]
 
-  @@map("marketvoice_sources")
+  @@index([status])
+  @@index([category, region])
+  @@index([scoreTotal])
+  @@map("bb_topics")
 }
 
-model MarketvoicePost {
-  id                  String   @id @default(cuid())
-  sourceId            String
-  subreddit           String
-  title               String
-  url                 String   @unique
-  author              String?
-  postedAt            DateTime
-  rawContent          String?  @db.Text
-  matchedKeywords     String[] @default([])
-  isRelevant          Boolean  @default(false)
-  detectedCity        String?
-  detectedState       String?
-  locationConfidence  String?
-  businessType        String?
-  asianRestaurantSignal Boolean @default(false)
-  cuisineType         String?
-  topicCategory       String?
-  competitorsMentioned String[] @default([])
-  painPoints          String[] @default([])
-  buyingIntent        String?
-  leadScore           Int      @default(0)
-  marketScore         Int      @default(0)
-  summary             String?  @db.Text
-  suggestedAction     String?  @db.Text
-  salesAngle          String?  @db.Text
-  aiRawResponse       String?  @db.Text
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+// ── 生产单元(一条视频) ───────────────────────────────────────────────────────
 
-  source MarketvoiceSource @relation(fields: [sourceId], references: [id])
+model ContentItem {
+  id              String    @id @default(cuid())
+  topicId         String
+  title           String
+  stage           String    @default("research") // research | script | storyboard | assets | voiceover | compose | qc | awaiting_approval | approved | rejected | published
+  coverTemplate   String    @default("truth") // truth | counter | control
+  coverTitleLines String[]  @default([])
+  publishNote     String    @default("AI辅助创作,内容仅作知识科普。")
+  stageEnteredAt  DateTime  @default(now())
+  producedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  @@index([subreddit])
-  @@index([buyingIntent])
-  @@index([leadScore])
-  @@index([postedAt])
-  @@index([detectedCity, detectedState])
-  @@index([isRelevant])
-  @@map("marketvoice_posts")
+  topic        Topic           @relation(fields: [topicId], references: [id])
+  research     Research?
+  scripts      Script[]
+  storyboards  Storyboard[]
+  assets       Asset[]
+  approvals    Approval[]
+  publications Publication[]
+  events       PipelineEvent[]
+
+  @@index([stage])
+  @@map("bb_content_items")
 }
 
-model MarketvoiceDailyReport {
-  id                  String   @id @default(cuid())
-  reportDate          DateTime @unique
-  totalPostsScanned   Int      @default(0)
-  relevantPosts       Int      @default(0)
-  highIntentLeads     Int      @default(0)
-  topCities           Json?
-  topCompetitors      Json?
-  topPainPoints       Json?
-  summary             String?  @db.Text
-  recommendedActions  String?  @db.Text
-  createdAt           DateTime @default(now())
+// ── 资料研究(强制来源,禁止编造) ─────────────────────────────────────────────
 
-  @@map("marketvoice_daily_reports")
+model Research {
+  id               String   @id @default(cuid())
+  contentItemId    String   @unique
+  coreClaim        String   @db.Text
+  supportingFacts  Json // [{claim, source, confidence}]
+  counterarguments Json     @default("[]")
+  riskNotes        Json     @default("[]")
+  usableExamples   Json     @default("[]")
+  raw              String?  @db.Text
+  createdAt        DateTime @default(now())
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@map("bb_research")
+}
+
+// ── 脚本(五段结构,60-100秒) ─────────────────────────────────────────────────
+
+model Script {
+  id             String   @id @default(cuid())
+  contentItemId  String
+  version        Int      @default(1)
+  beats          Json // {hook, scene, principle, caseStudy, twist, interaction}
+  fullText       String   @db.Text
+  durationEstSec Int      @default(90)
+  qcReport       Json?
+  status         String   @default("draft") // draft | passed_qc | failed_qc
+  createdAt      DateTime @default(now())
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@unique([contentItemId, version])
+  @@map("bb_scripts")
+}
+
+// ── 分镜(8-12图 + 2-3动态镜头) ──────────────────────────────────────────────
+
+model Storyboard {
+  id            String   @id @default(cuid())
+  contentItemId String
+  version       Int      @default(1)
+  shots         Json // [{idx, type: image|motion, imagePrompt, motionPrompt?, durationSec, cameraMove, narration}]
+  createdAt     DateTime @default(now())
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@unique([contentItemId, version])
+  @@map("bb_storyboards")
+}
+
+// ── 资产(封面/分镜图/动态镜头/配音/字幕/成片) ──────────────────────────────────
+
+model Asset {
+  id            String   @id @default(cuid())
+  contentItemId String
+  kind          String // cover_bg | cover_final | shot_image | motion_clip | voiceover | subtitle | final_video
+  shotIndex     Int?
+  provider      String // mock | seedream | seedance | doubao | remotion
+  path          String
+  meta          Json     @default("{}")
+  isMock        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@index([contentItemId, kind])
+  @@map("bb_assets")
+}
+
+// ── 审批(Telegram / 网页) ────────────────────────────────────────────────────
+
+model Approval {
+  id            String   @id @default(cuid())
+  contentItemId String
+  channel       String // telegram | web
+  decision      String // approved | rejected
+  notes         String?
+  decidedBy     String?
+  decidedAt     DateTime @default(now())
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@map("bb_approvals")
+}
+
+// ── 发布(Phase 1 人工登记,Phase 3 接抖音开放平台) ────────────────────────────
+
+model Publication {
+  id            String   @id @default(cuid())
+  contentItemId String
+  platform      String   @default("douyin")
+  mode          String   @default("manual") // manual | api
+  externalId    String?
+  shareUrl      String?
+  publishedAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  contentItem ContentItem      @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+  metrics     MetricSnapshot[]
+
+  @@map("bb_publications")
+}
+
+// ── 数据快照(24h/72h/168h,支撑与账号自身基准对比) ───────────────────────────
+
+model MetricSnapshot {
+  id             String   @id @default(cuid())
+  publicationId  String
+  atHours        Int // 24 | 72 | 168
+  plays          Int      @default(0)
+  completionRate Float? // 0-1
+  avgWatchSec    Float?
+  likes          Int      @default(0)
+  favorites      Int      @default(0)
+  shares         Int      @default(0)
+  comments       Int      @default(0)
+  followersDelta Int      @default(0)
+  source         String   @default("manual") // manual | api
+  capturedAt     DateTime @default(now())
+
+  publication Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  @@unique([publicationId, atHours])
+  @@map("bb_metric_snapshots")
+}
+
+// ── 复盘 ──────────────────────────────────────────────────────────────────────
+
+model Insight {
+  id              String   @id @default(cuid())
+  periodStart     DateTime
+  periodEnd       DateTime
+  summary         String   @db.Text
+  recommendations Json     @default("[]") // [{type: sequel|retire|adjust, topicTitle, reason}]
+  createdAt       DateTime @default(now())
+
+  @@map("bb_insights")
+}
+
+// ── 流水线事件日志 ────────────────────────────────────────────────────────────
+
+model PipelineEvent {
+  id            String   @id @default(cuid())
+  contentItemId String?
+  stage         String
+  status        String // started | succeeded | failed
+  detail        Json     @default("{}")
+  error         String?  @db.Text
+  createdAt     DateTime @default(now())
+
+  contentItem ContentItem? @relation(fields: [contentItemId], references: [id], onDelete: SetNull)
+
+  @@index([contentItemId])
+  @@index([createdAt])
+  @@map("bb_pipeline_events")
+}
+
+// ── 键值配置(账号基准等) ─────────────────────────────────────────────────────
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("bb_settings")
 }
