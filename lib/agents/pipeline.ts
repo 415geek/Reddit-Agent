@@ -105,7 +105,7 @@ async function runScript(item: ItemWithRelations) {
 async function runStoryboard(item: ItemWithRelations) {
   const script = item.scripts[0]
   if (!script) throw new Error('缺少脚本,无法做分镜')
-  const out = await generateJSON<{ shots: Shot[]; bgmMood?: string }>({
+  const out = await generateJSON<{ shots: Shot[]; bgmMood?: string; turnShotIdx?: number }>({
     system: STORYBOARDER_SYSTEM,
     user: storyboarderUser(script.fullText, script.durationEstSec),
     maxTokens: 8192,
@@ -117,11 +117,19 @@ async function runStoryboard(item: ItemWithRelations) {
     coverTemplate: item.coverTemplate,
     category: item.topic?.category,
   })
+  // 模型给的反转点下标可能越界,越界就当没标(合成时退回无断点)
+  const turnShotIdx =
+    typeof out.turnShotIdx === 'number' && out.shots.some((s) => s.idx === out.turnShotIdx) ? out.turnShotIdx : null
   const version = (item.storyboards[0]?.version ?? 0) + 1
   await prisma.storyboard.create({
-    data: { contentItemId: item.id, version, shots: out.shots as unknown as object, bgmMood },
+    data: { contentItemId: item.id, version, shots: out.shots as unknown as object, bgmMood, turnShotIdx },
   })
-  return { shots: out.shots.length, motionShots: out.shots.filter((s) => s.type === 'motion').length, bgmMood }
+  return {
+    shots: out.shots.length,
+    motionShots: out.shots.filter((s) => s.type === 'motion').length,
+    bgmMood,
+    turnShotIdx,
+  }
 }
 
 /**
@@ -250,13 +258,48 @@ async function runVoiceover(item: ItemWithRelations) {
   if (!script) throw new Error('缺少脚本,无法配音')
   const providers = getMediaProviders()
   const labels = providerLabels()
-  const vo = await providers.tts.synthesize(script.fullText, { itemId: item.id, name: 'voiceover' })
-  await prisma.asset.create({
-    data: { contentItemId: item.id, kind: 'voiceover', provider: labels.tts, path: vo.path, meta: vo.meta as object, isMock: vo.isMock },
-  })
+  const ttsOpts = { itemId: item.id, name: 'voiceover' }
+
+  // 已经配过音就跳过(异步两段式下这一阶段会被调用多次)
+  let voAsset = await prisma.asset.findFirst({ where: { contentItemId: item.id, kind: 'voiceover' } })
+  if (!voAsset) {
+    // 云端异步两段式:581 字的稿子同步合成实测会撞上函数上限,
+    // 整个阶段超时死掉、什么都不留下,下一次还是从头再来。
+    if (providers.tts.startSynthesize && providers.tts.pollSynthesize) {
+      const jobKey = `tts_job:${item.id}`
+      const saved = await prisma.setting.findUnique({ where: { key: jobKey } })
+      let jobId = (saved?.value as { jobId?: string } | null)?.jobId
+
+      if (!jobId) {
+        jobId = (await providers.tts.startSynthesize(script.fullText, ttsOpts)).jobId
+        await prisma.setting.upsert({ where: { key: jobKey }, update: { value: { jobId } }, create: { key: jobKey, value: { jobId } } })
+        return { submitted: true, stayInStage: true }
+      }
+
+      const done = await providers.tts.pollSynthesize(jobId, ttsOpts)
+      if (!done) return { waitingForTts: true, stayInStage: true }
+      voAsset = await prisma.asset.create({
+        data: {
+          contentItemId: item.id,
+          kind: 'voiceover',
+          provider: labels.tts,
+          path: done.path,
+          meta: { ...(done.meta as object), chars: script.fullText.length },
+          isMock: done.isMock,
+        },
+      })
+      await prisma.setting.delete({ where: { key: jobKey } }).catch(() => {})
+    } else {
+      const vo = await providers.tts.synthesize(script.fullText, ttsOpts)
+      voAsset = await prisma.asset.create({
+        data: { contentItemId: item.id, kind: 'voiceover', provider: labels.tts, path: vo.path, meta: vo.meta as object, isMock: vo.isMock },
+      })
+    }
+  }
   // 简易字幕时间轴:按镜头 narration 与时长切分(SRT)
   const storyboard = item.storyboards[0]
-  if (storyboard) {
+  const hasSubtitle = await prisma.asset.findFirst({ where: { contentItemId: item.id, kind: 'subtitle' } })
+  if (storyboard && !hasSubtitle) {
     const shots = storyboard.shots as unknown as Shot[]
     let t = 0
     const fmt = (sec: number) => {

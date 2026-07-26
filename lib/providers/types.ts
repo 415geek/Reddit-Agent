@@ -35,9 +35,24 @@ export interface MotionGenProvider {
   pollMotion?(jobId: string, opts: MotionOpts): Promise<GeneratedFile | null>
 }
 
+export interface TtsOpts {
+  itemId: string
+  name: string
+  voice?: string
+}
+
 export interface TTSProvider {
-  /** 配音(豆包语音) */
-  synthesize(text: string, opts: { itemId: string; name: string; voice?: string }): Promise<GeneratedFile>
+  /** 配音 */
+  synthesize(text: string, opts: TtsOpts): Promise<GeneratedFile>
+
+  /**
+   * 异步两段式,和图生视频同理:长稿子的 TTS 会跑过 serverless 的函数上限
+   * (实测 581 字直接 FUNCTION_INVOCATION_TIMEOUT,整个阶段没留下任何东西)。
+   * 实现了这一对的 provider 会被拆成"提交"和"取结果"两次调用。
+   */
+  startSynthesize?(text: string, opts: TtsOpts): Promise<{ jobId: string }>
+  /** 未完成返回 null */
+  pollSynthesize?(jobId: string, opts: TtsOpts): Promise<GeneratedFile | null>
 }
 
 export interface BgmOpts {

@@ -1,0 +1,27 @@
+{
+  "_comment": "BGM 情绪与生成提示词。应用(lib/domain.ts)和曲库脚本(scripts/build-bgm-library.mjs)共用这一份,改一处两边都变。参数按参考视频实测:约95 BPM、有实低频支撑、音调性强(谱平坦度0.003)、动态起伏小——底噪型音乐,职责是垫住旁白不是抢戏。",
+  "_measured": {
+    "targetBpm": 95,
+    "referenceNarratorF0Hz": 118,
+    "referenceSpeechRateCharsPerSec": 5.5,
+    "referenceIntegratedLufs": -12.6
+  },
+  "moods": {
+    "suspense": {
+      "label": "悬念揭秘",
+      "prompt": "dark minimal cinematic underscore at 95 BPM, sparse low piano notes, deep sustained sub bass drone, subtle ticking pulse, restrained tension, tonal and harmonic not noisy, no vocals, no drum buildup, no big climax, steady low dynamics, sits under spoken narration, instrumental"
+    },
+    "momentum": {
+      "label": "推进紧凑",
+      "prompt": "modern minimal electronic underscore at 95 BPM, steady muted pulse, light arpeggiated synth, solid low end, forward driving but understated, tonal and harmonic, no vocals, no drop, no aggressive percussion, even dynamics, sits under spoken narration, instrumental"
+    },
+    "insight": {
+      "label": "理性洞察",
+      "prompt": "calm analytical ambient underscore at 95 BPM, clean sustained pads, occasional soft marimba or bell, warm low end, spacious and neutral, tonal and harmonic, no vocals, no melody hook, very even dynamics, sits under spoken narration, instrumental"
+    },
+    "warm": {
+      "label": "生活温和",
+      "prompt": "warm acoustic underscore at 95 BPM, soft nylon guitar and light rhodes, gentle upright bass, everyday optimism, unhurried, tonal and harmonic, no vocals, no strong beat, even dynamics, sits under spoken narration, instrumental"
+    }
+  }
+}

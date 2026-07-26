@@ -31,6 +31,8 @@ export interface ComposeJob {
   title: string
   durationEstSec: number
   bgmMood: string | null
+  /** 反转点镜头下标:合成时在这里做节奏断点 */
+  turnShotIdx: number | null
   shots: ComposeShot[]
   voiceoverPath: string
   bgmPath: string | null
@@ -92,6 +94,7 @@ export async function claimComposeJob(workerId: string): Promise<ComposeJob | nu
       title: item.title,
       durationEstSec: shots.reduce((s, sh) => s + (sh.durationSec || 0), 0),
       bgmMood,
+      turnShotIdx: storyboard.turnShotIdx,
       shots: shots.map((sh) => ({
         idx: sh.idx,
         type: sh.type,

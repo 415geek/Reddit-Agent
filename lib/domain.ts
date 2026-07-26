@@ -1,3 +1,5 @@
+import BGM_MOODS_CONFIG from '../config/bgm-moods.json'
+
 // 领域类型与常量:阶段机、分类、封面模板、评分维度
 
 // 质检紧跟脚本、在分镜之前:不合规的脚本要在花钱生成图片/配音之前就被拦下并返工
@@ -65,23 +67,17 @@ export const COVER_TEMPLATE_LABELS: Record<string, string> = {
  */
 export const BGM_MOODS = ['suspense', 'momentum', 'insight', 'warm'] as const
 export type BgmMood = (typeof BGM_MOODS)[number]
-export const BGM_MOOD_LABELS: Record<BgmMood, string> = {
-  suspense: '悬念揭秘',
-  momentum: '推进紧凑',
-  insight: '理性洞察',
-  warm: '生活温和',
-}
+export const BGM_MOOD_LABELS: Record<BgmMood, string> = Object.fromEntries(
+  BGM_MOODS.map((m) => [m, BGM_MOODS_CONFIG.moods[m].label]),
+) as Record<BgmMood, string>
 
-/** 生成/挑选BGM用的音乐描述词。统一强调 instrumental、no vocals、低起伏 */
-export const BGM_MOOD_PROMPTS: Record<BgmMood, string> = {
-  suspense:
-    'dark minimal cinematic underscore, sparse low piano notes, sustained bass drone, subtle ticking pulse, restrained tension, no vocals, no drum buildup, no big climax, steady low dynamics, background bed for spoken narration, instrumental',
-  momentum:
-    'modern minimal electronic underscore, steady muted pulse, light arpeggiated synth, forward driving but understated, no vocals, no drop, no aggressive percussion, even dynamics, background bed for spoken narration, instrumental',
-  insight:
-    'calm analytical ambient underscore, clean sustained pads, occasional soft marimba or bell, spacious and neutral, no vocals, no melody hook, very even dynamics, background bed for spoken narration, instrumental',
-  warm: 'warm acoustic underscore, soft nylon guitar and light rhodes, gentle everyday optimism, unhurried, no vocals, no strong beat, even dynamics, background bed for spoken narration, instrumental',
-}
+/**
+ * 生成/挑选BGM用的音乐描述词。真身在 config/bgm-moods.json——
+ * 曲库脚本是独立的 .mjs,导不了 TS,共用一份 JSON 才不会两边漂移。
+ */
+export const BGM_MOOD_PROMPTS: Record<BgmMood, string> = Object.fromEntries(
+  BGM_MOODS.map((m) => [m, BGM_MOODS_CONFIG.moods[m].prompt]),
+) as Record<BgmMood, string>
 
 /** 分镜没给情绪时的兜底:按封面模板推。三种模板本来就对应三种叙事张力 */
 const COVER_TEMPLATE_BGM: Record<CoverTemplate, BgmMood> = {

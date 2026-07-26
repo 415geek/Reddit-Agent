@@ -107,7 +107,10 @@ motion 镜头额外提供 motionPrompt,模板风格:
 - warm 生活温和:小店、街边生意、身边人的故事
 BGM只是垫底,不要选煽情或戏剧化的方向。
 
-只输出合法JSON:{"bgmMood":"suspense","shots": [{"idx":0,"type":"image|motion","imagePrompt":"...","motionPrompt":"仅motion镜头","durationSec":8,"cameraMove":"push_in","narration":"对应口播片段"}]}`
+再指出哪一个镜头是"反转点"(turnShotIdx):观众认知被推翻、答案揭晓的那一刻,
+通常落在 twist 段的第一个镜头。合成时这里会让音乐先静一拍再重回,做出节奏的断点。
+
+只输出合法JSON:{"bgmMood":"suspense","turnShotIdx":7,"shots": [{"idx":0,"type":"image|motion","imagePrompt":"...","motionPrompt":"仅motion镜头","durationSec":8,"cameraMove":"push_in","narration":"对应口播片段"}]}`
 
 export function storyboarderUser(fullText: string, durationSec: number) {
   return `脚本全文(${durationSec}秒):\n${fullText}\n请输出分镜JSON。`

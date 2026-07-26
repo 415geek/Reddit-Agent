@@ -21,15 +21,9 @@ import path from 'node:path'
  * 调 POST /api/admin/bgm 改清单。
  */
 
-const MOODS = {
-  suspense:
-    'dark minimal cinematic underscore, sparse low piano notes, sustained bass drone, subtle ticking pulse, restrained tension, no vocals, no drum buildup, no big climax, steady low dynamics, background bed for spoken narration, instrumental',
-  momentum:
-    'modern minimal electronic underscore, steady muted pulse, light arpeggiated synth, forward driving but understated, no vocals, no drop, no aggressive percussion, even dynamics, background bed for spoken narration, instrumental',
-  insight:
-    'calm analytical ambient underscore, clean sustained pads, occasional soft marimba or bell, spacious and neutral, no vocals, no melody hook, very even dynamics, background bed for spoken narration, instrumental',
-  warm: 'warm acoustic underscore, soft nylon guitar and light rhodes, gentle everyday optimism, unhurried, no vocals, no strong beat, even dynamics, background bed for spoken narration, instrumental',
-}
+// 提示词和标签的真身在 config/bgm-moods.json,和应用共用一份,免得两边漂移
+const CONFIG = JSON.parse(await fs.readFile(new URL('../config/bgm-moods.json', import.meta.url), 'utf-8'))
+const MOODS = Object.fromEntries(Object.entries(CONFIG.moods).map(([k, v]) => [k, v.prompt]))
 
 const PER_MOOD = Number(process.argv[2] || 2)
 // 出 110 秒:比最长的成片还长一截,合成时裁掉即可,免得循环接缝被听出来
@@ -67,31 +61,56 @@ async function hasFfmpeg() {
   }
 }
 
+/** 带退避的重试。曲子已经生成出来了,别让一次 503 把整轮白跑掉 */
+async function retry(label, fn, times = 4) {
+  let last
+  for (let i = 1; i <= times; i++) {
+    try {
+      return await fn()
+    } catch (e) {
+      last = e
+      if (i === times) break
+      const wait = 2000 * 2 ** (i - 1)
+      log(`  ${label} 第${i}次失败(${e.message.slice(0, 80)}),${wait / 1000}秒后重试`)
+      await new Promise((r) => setTimeout(r, wait))
+    }
+  }
+  throw last
+}
+
 async function generate(mood, prompt) {
-  const res = await fetch(`https://fal.run/${MODEL}`, {
-    method: 'POST',
-    headers: { Authorization: `Key ${need('FAL_KEY')}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, duration: DURATION }),
+  const url = await retry('生成', async () => {
+    const res = await fetch(`https://fal.run/${MODEL}`, {
+      method: 'POST',
+      headers: { Authorization: `Key ${need('FAL_KEY')}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, duration: DURATION }),
+    })
+    const text = await res.text()
+    if (!res.ok) throw new Error(`fal ${MODEL} 失败 ${res.status}: ${text.slice(0, 300)}`)
+    const out = JSON.parse(text)
+    const u = out.audio_file?.url || out.audio?.url
+    if (!u) throw new Error(`fal 返回里没有音频地址: ${text.slice(0, 200)}`)
+    return u
   })
-  const text = await res.text()
-  if (!res.ok) throw new Error(`fal ${MODEL} 失败 ${res.status}: ${text.slice(0, 300)}`)
-  const out = JSON.parse(text)
-  const url = out.audio_file?.url || out.audio?.url
-  if (!url) throw new Error(`fal 返回里没有音频地址: ${text.slice(0, 200)}`)
-  const audio = await fetch(url)
-  if (!audio.ok) throw new Error(`下载失败 ${audio.status}`)
-  return Buffer.from(await audio.arrayBuffer())
+  // 下载单独重试:fal 的 CDN 偶尔 503,而这时曲子已经花钱生成好了
+  return retry('下载', async () => {
+    const audio = await fetch(url)
+    if (!audio.ok) throw new Error(`下载失败 ${audio.status}`)
+    return Buffer.from(await audio.arrayBuffer())
+  })
 }
 
 async function upload(relPath, buffer, contentType) {
   const url = need('SUPABASE_URL').replace(/\/$/, '')
   const key = need('SUPABASE_KEY')
-  const res = await fetch(`${url}/storage/v1/object/${BUCKET}/${relPath}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, apikey: key, 'Content-Type': contentType, 'x-upsert': 'true' },
-    body: buffer,
+  await retry('上传', async () => {
+    const res = await fetch(`${url}/storage/v1/object/${BUCKET}/${relPath}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, apikey: key, 'Content-Type': contentType, 'x-upsert': 'true' },
+      body: buffer,
+    })
+    if (!res.ok) throw new Error(`上传失败 ${res.status}: ${(await res.text()).slice(0, 200)}`)
   })
-  if (!res.ok) throw new Error(`上传失败 ${res.status}: ${(await res.text()).slice(0, 200)}`)
 }
 
 async function main() {

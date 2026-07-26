@@ -124,6 +124,7 @@ model Storyboard {
   version       Int      @default(1)
   shots         Json // [{idx, type: image|motion, imagePrompt, motionPrompt?, durationSec, cameraMove, narration}]
   bgmMood       String? // suspense | momentum | insight | warm(由分镜模型选,空则按封面模板兜底)
+  turnShotIdx   Int? // 反转点镜头:合成时在这里让音乐静一拍再回来,做出节奏断点
   createdAt     DateTime @default(now())
 
   contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)

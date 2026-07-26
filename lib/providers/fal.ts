@@ -16,7 +16,11 @@ const QUEUE_BASE = 'https://queue.fal.run'
 const IMAGE_MODEL = process.env.FAL_IMAGE_MODEL || 'fal-ai/bytedance/seedream/v4/text-to-image'
 const MOTION_MODEL = process.env.FAL_MOTION_MODEL || 'fal-ai/bytedance/seedance/v1/pro/image-to-video'
 const TTS_MODEL = process.env.FAL_TTS_MODEL || 'fal-ai/minimax/speech-02-hd'
-const TTS_VOICE = process.env.FAL_TTS_VOICE || 'Wise_Woman'
+// 男声,基频约 117Hz。挑法不是听感拍脑袋:拿用户给的参考视频测出旁白基频 118Hz、
+// 音高起伏 4.7 半音、说话语速 5.5 字/秒,再把 MiniMax 的 7 个中文男声逐个生成同一段话
+// 测同样三项,Deep_Voice_Man 三项全中(117Hz / 4.65 半音 / 5.7 字每秒)。
+// speed 保持 1:实测 0.9~1.0 之间的差异是生成随机性,不是参数在起作用。
+const TTS_VOICE = process.env.FAL_TTS_VOICE || 'Deep_Voice_Man'
 // 背景音乐。cassetteai 严格按 duration 出整段,动态起伏也比 ace-step 小——
 // BGM 要的就是"平",起伏大的音乐压在旁白下面会一会儿盖住人声、一会儿消失。
 const MUSIC_MODEL = process.env.FAL_MUSIC_MODEL || 'cassetteai/music-generator'
@@ -192,21 +196,62 @@ export const falBgm: BgmProvider = {
   },
 }
 
+function ttsBody(text: string, voice: string) {
+  return {
+    text,
+    voice_setting: { voice_id: voice, speed: 1, vol: 1 },
+    language_boost: 'Chinese',
+    output_format: 'url',
+  }
+}
+
+async function saveTts(url: string, text: string, voice: string, opts: { itemId: string; name: string }, durationMs?: number) {
+  const rel = `items/${opts.itemId}/${opts.name}.mp3`
+  await download(url, rel)
+  return {
+    path: rel,
+    meta: { chars: text.length, model: TTS_MODEL, voice, durationMs },
+    isMock: false,
+  }
+}
+
 export const falTts: TTSProvider = {
+  /** 同步版:自托管/无超时环境用 */
   async synthesize(text, opts): Promise<GeneratedFile> {
-    const out = await falRun<{ audio: { url: string }; duration_ms?: number }>(TTS_MODEL, {
-      text,
-      voice_setting: { voice_id: opts.voice || TTS_VOICE, speed: 1, vol: 1 },
-      language_boost: 'Chinese',
-      output_format: 'url',
-    })
+    const voice = opts.voice || TTS_VOICE
+    const out = await falRun<{ audio: { url: string }; duration_ms?: number }>(TTS_MODEL, ttsBody(text, voice))
     if (!out.audio?.url) throw new Error('fal TTS 返回为空')
-    const rel = `items/${opts.itemId}/${opts.name}.mp3`
-    await download(out.audio.url, rel)
-    return {
-      path: rel,
-      meta: { chars: text.length, model: TTS_MODEL, voice: opts.voice || TTS_VOICE, durationMs: out.duration_ms },
-      isMock: false,
-    }
+    return saveTts(out.audio.url, text, voice, opts, out.duration_ms)
+  },
+
+  /** 只提交:长稿子的合成会超过 serverless 函数上限,不能同步等 */
+  async startSynthesize(text, opts) {
+    const res = await fetch(`${QUEUE_BASE}/${TTS_MODEL}`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify(ttsBody(text, opts.voice || TTS_VOICE)),
+    })
+    const body = await res.text()
+    if (!res.ok) throw new Error(`fal TTS 提交失败 ${res.status}: ${body.slice(0, 400)}`)
+    const { request_id } = JSON.parse(body) as { request_id: string }
+    if (!request_id) throw new Error('fal TTS 未返回 request_id')
+    return { jobId: request_id }
+  },
+
+  async pollSynthesize(jobId, opts) {
+    // 和图生视频一样,队列路径用 owner 前缀(fal-ai/minimax),不是完整模型路径
+    const owner = TTS_MODEL.split('/').slice(0, 2).join('/')
+    const st = await fetch(`${QUEUE_BASE}/${owner}/requests/${jobId}/status`, { headers: headers() })
+    if (!st.ok) throw new Error(`fal TTS 查状态失败 ${st.status}: ${(await st.text()).slice(0, 300)}`)
+    const { status } = (await st.json()) as { status: string }
+    if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') return null
+    if (status !== 'COMPLETED') throw new Error(`fal TTS 任务异常: ${status}`)
+
+    const out = await fetch(`${QUEUE_BASE}/${owner}/requests/${jobId}`, { headers: headers() })
+    const outText = await out.text()
+    if (!out.ok) throw new Error(`fal TTS 取结果失败 ${out.status}: ${outText.slice(0, 300)}`)
+    const { audio, duration_ms } = JSON.parse(outText) as { audio?: { url: string }; duration_ms?: number }
+    if (!audio?.url) throw new Error('fal TTS 返回为空')
+    return saveTts(audio.url, '', opts.voice || TTS_VOICE, opts, duration_ms)
   },
 }
