@@ -48,10 +48,10 @@ export const mockImage: ImageGenProvider = {
 }
 
 export const mockMotion: MotionGenProvider = {
-  async generateMotion(imagePath, motionPrompt, opts): Promise<GeneratedFile> {
+  async generateMotion(image, motionPrompt, opts): Promise<GeneratedFile> {
     const rel = `items/${opts.itemId}/${opts.name}.mp4.txt`
-    await saveAsset(rel, `MOCK MOTION CLIP\nsource image: ${imagePath}\nduration: ${opts.durationSec}s\nprompt: ${motionPrompt}`)
-    return { path: rel, meta: { motionPrompt: motionPrompt.slice(0, 500), sourceImage: imagePath }, isMock: true }
+    await saveAsset(rel, `MOCK MOTION CLIP\nsource image: ${image.path}\nduration: ${opts.durationSec}s\nprompt: ${motionPrompt}`)
+    return { path: rel, meta: { motionPrompt: motionPrompt.slice(0, 500), sourceImage: image.path }, isMock: true }
   },
 }
 

@@ -12,8 +12,12 @@ export interface ImageGenProvider {
 }
 
 export interface MotionGenProvider {
-  /** 图生视频(Seedance):关键动态镜头 */
-  generateMotion(imagePath: string, motionPrompt: string, opts: { itemId: string; name: string; durationSec: number }): Promise<GeneratedFile>
+  /**
+   * 图生视频(Seedance):关键动态镜头。
+   * 传入的是上一步出图的完整结果——云端模型需要 meta.sourceUrl(公网地址),
+   * 本地/自托管实现则用 path。
+   */
+  generateMotion(image: GeneratedFile, motionPrompt: string, opts: { itemId: string; name: string; durationSec: number }): Promise<GeneratedFile>
 }
 
 export interface TTSProvider {

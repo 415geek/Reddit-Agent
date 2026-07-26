@@ -46,7 +46,7 @@ export const seedreamImage: ImageGenProvider = {
 }
 
 export const seedanceMotion: MotionGenProvider = {
-  async generateMotion(imagePath, motionPrompt, opts): Promise<GeneratedFile> {
+  async generateMotion(image, motionPrompt, opts): Promise<GeneratedFile> {
     const apiKey = requireEnv('ARK_API_KEY')
     const model = requireEnv('SEEDANCE_MODEL')
     // Seedance 为异步任务:创建任务 → 轮询 → 下载
@@ -80,7 +80,7 @@ export const seedanceMotion: MotionGenProvider = {
     const videoRes = await fetch(videoUrl)
     const rel = `items/${opts.itemId}/${opts.name}.mp4`
     await saveAsset(rel, Buffer.from(await videoRes.arrayBuffer()))
-    return { path: rel, meta: { motionPrompt: motionPrompt.slice(0, 500), model, taskId }, isMock: false }
+    return { path: rel, meta: { motionPrompt: motionPrompt.slice(0, 500), model, taskId, sourceImage: image.path }, isMock: false }
   },
 }
 

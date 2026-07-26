@@ -11,7 +11,7 @@ import {
   scriptwriterUser,
   storyboarderUser,
 } from '../prompts'
-import { getMediaProviders } from '../providers'
+import { getMediaProviders, providerLabels } from '../providers'
 import { logEvent } from './events'
 
 interface ScriptOutput {
@@ -122,24 +122,25 @@ async function runAssets(item: ItemWithRelations) {
   if (!storyboard) throw new Error('缺少分镜,无法生成资产')
   const shots = storyboard.shots as unknown as Shot[]
   const providers = getMediaProviders()
+  const labels = providerLabels()
 
   // 封面背景:用第一个镜头的画面语言,但不带文字(标题由 /covers 页程序化叠加)
   const coverPrompt = shots[0].imagePrompt
   const coverBg = await providers.image.generateImage(coverPrompt, { itemId: item.id, name: 'cover_bg' })
   await prisma.asset.create({
-    data: { contentItemId: item.id, kind: 'cover_bg', provider: coverBg.isMock ? 'mock' : 'seedream', path: coverBg.path, meta: coverBg.meta as object, isMock: coverBg.isMock },
+    data: { contentItemId: item.id, kind: 'cover_bg', provider: labels.image, path: coverBg.path, meta: coverBg.meta as object, isMock: coverBg.isMock },
   })
 
   // 分镜图(全部镜头都要底图;motion 镜头再图生视频)
   for (const shot of shots) {
     const img = await providers.image.generateImage(shot.imagePrompt, { itemId: item.id, name: `shot_${shot.idx}` })
     await prisma.asset.create({
-      data: { contentItemId: item.id, kind: 'shot_image', shotIndex: shot.idx, provider: img.isMock ? 'mock' : 'seedream', path: img.path, meta: img.meta as object, isMock: img.isMock },
+      data: { contentItemId: item.id, kind: 'shot_image', shotIndex: shot.idx, provider: labels.image, path: img.path, meta: img.meta as object, isMock: img.isMock },
     })
     if (shot.type === 'motion' && shot.motionPrompt) {
-      const clip = await providers.motion.generateMotion(img.path, shot.motionPrompt, { itemId: item.id, name: `motion_${shot.idx}`, durationSec: shot.durationSec })
+      const clip = await providers.motion.generateMotion(img, shot.motionPrompt, { itemId: item.id, name: `motion_${shot.idx}`, durationSec: shot.durationSec })
       await prisma.asset.create({
-        data: { contentItemId: item.id, kind: 'motion_clip', shotIndex: shot.idx, provider: clip.isMock ? 'mock' : 'seedance', path: clip.path, meta: clip.meta as object, isMock: clip.isMock },
+        data: { contentItemId: item.id, kind: 'motion_clip', shotIndex: shot.idx, provider: labels.motion, path: clip.path, meta: clip.meta as object, isMock: clip.isMock },
       })
     }
   }
@@ -150,9 +151,10 @@ async function runVoiceover(item: ItemWithRelations) {
   const script = item.scripts[0]
   if (!script) throw new Error('缺少脚本,无法配音')
   const providers = getMediaProviders()
+  const labels = providerLabels()
   const vo = await providers.tts.synthesize(script.fullText, { itemId: item.id, name: 'voiceover' })
   await prisma.asset.create({
-    data: { contentItemId: item.id, kind: 'voiceover', provider: vo.isMock ? 'mock' : 'doubao', path: vo.path, meta: vo.meta as object, isMock: vo.isMock },
+    data: { contentItemId: item.id, kind: 'voiceover', provider: labels.tts, path: vo.path, meta: vo.meta as object, isMock: vo.isMock },
   })
   // 简易字幕时间轴:按镜头 narration 与时长切分(SRT)
   const storyboard = item.storyboards[0]
