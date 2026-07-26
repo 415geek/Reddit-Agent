@@ -11,13 +11,28 @@ export interface ImageGenProvider {
   generateImage(prompt: string, opts: { itemId: string; name: string; width?: number; height?: number }): Promise<GeneratedFile>
 }
 
+export interface MotionOpts {
+  itemId: string
+  name: string
+  durationSec: number
+}
+
 export interface MotionGenProvider {
   /**
    * 图生视频(Seedance):关键动态镜头。
    * 传入的是上一步出图的完整结果——云端模型需要 meta.sourceUrl(公网地址),
    * 本地/自托管实现则用 path。
    */
-  generateMotion(image: GeneratedFile, motionPrompt: string, opts: { itemId: string; name: string; durationSec: number }): Promise<GeneratedFile>
+  generateMotion(image: GeneratedFile, motionPrompt: string, opts: MotionOpts): Promise<GeneratedFile>
+
+  /**
+   * 异步两段式(serverless 必需):单段图生视频要 60-90 秒,比函数上限还长,
+   * 同步等一定超时。实现了这对方法的 provider 会被拆成"提交"和"取结果"两次调用,
+   * 任务 id 存库,跨请求轮询。没实现的(mock/自托管)继续走上面的同步路径。
+   */
+  startMotion?(image: GeneratedFile, motionPrompt: string, opts: MotionOpts): Promise<{ jobId: string }>
+  /** 未完成返回 null,完成返回落盘结果 */
+  pollMotion?(jobId: string, opts: MotionOpts): Promise<GeneratedFile | null>
 }
 
 export interface TTSProvider {

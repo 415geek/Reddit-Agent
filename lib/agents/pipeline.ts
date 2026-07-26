@@ -117,34 +117,112 @@ async function runStoryboard(item: ItemWithRelations) {
   return { shots: out.shots.length, motionShots: out.shots.filter((s) => s.type === 'motion').length }
 }
 
+/**
+ * 单次 advance 的资产生成时间预算。真实生成一张图约8秒、一段图生视频约70秒,
+ * 一条内容 12图+3视频要 300 秒以上,远超 serverless 函数上限。
+ * 所以这一阶段做成可续跑:每次只做到预算用完,已完成的资产跳过,反复调用直到做完。
+ */
+const ASSET_BUDGET_MS = Number(process.env.ASSET_BUDGET_MS || 40_000)
+
 async function runAssets(item: ItemWithRelations) {
   const storyboard = item.storyboards[0]
   if (!storyboard) throw new Error('缺少分镜,无法生成资产')
   const shots = storyboard.shots as unknown as Shot[]
   const providers = getMediaProviders()
   const labels = providerLabels()
+  const deadline = Date.now() + ASSET_BUDGET_MS
 
-  // 封面背景:用第一个镜头的画面语言,但不带文字(标题由 /covers 页程序化叠加)
-  const coverPrompt = shots[0].imagePrompt
-  const coverBg = await providers.image.generateImage(coverPrompt, { itemId: item.id, name: 'cover_bg' })
-  await prisma.asset.create({
-    data: { contentItemId: item.id, kind: 'cover_bg', provider: labels.image, path: coverBg.path, meta: coverBg.meta as object, isMock: coverBg.isMock },
+  // 已有资产:断点续跑的依据
+  const existing = await prisma.asset.findMany({
+    where: { contentItemId: item.id, kind: { in: ['cover_bg', 'shot_image', 'motion_clip'] } },
   })
+  const hasCover = existing.some((a) => a.kind === 'cover_bg')
+  const imageByShot = new Map(existing.filter((a) => a.kind === 'shot_image').map((a) => [a.shotIndex, a]))
+  const motionDone = new Set(existing.filter((a) => a.kind === 'motion_clip').map((a) => a.shotIndex))
+
+  let made = 0
+  const outOfTime = () => Date.now() > deadline
+
+  // 封面背景:沿用第一个镜头的画面语言,但必须干净无字——标题由 /covers 页程序化叠加,
+  // 画面里再出现数字/招牌/价签会和叠加的标题打架。实测模型会无视单薄的"不要文字",故加重约束。
+  if (!hasCover) {
+    const coverPrompt =
+      shots[0].imagePrompt.replace(/,?\s*不要文字,不要Logo,不要水印\s*$/, '') +
+      ',画面中绝对不能出现任何文字、数字、字母、价格标签、招牌、logo、水印或可辨认的符号'
+    const coverBg = await providers.image.generateImage(coverPrompt, { itemId: item.id, name: 'cover_bg' })
+    await prisma.asset.create({
+      data: { contentItemId: item.id, kind: 'cover_bg', provider: labels.image, path: coverBg.path, meta: coverBg.meta as object, isMock: coverBg.isMock },
+    })
+    made++
+  }
 
   // 分镜图(全部镜头都要底图;motion 镜头再图生视频)
   for (const shot of shots) {
-    const img = await providers.image.generateImage(shot.imagePrompt, { itemId: item.id, name: `shot_${shot.idx}` })
-    await prisma.asset.create({
-      data: { contentItemId: item.id, kind: 'shot_image', shotIndex: shot.idx, provider: labels.image, path: img.path, meta: img.meta as object, isMock: img.isMock },
-    })
-    if (shot.type === 'motion' && shot.motionPrompt) {
-      const clip = await providers.motion.generateMotion(img, shot.motionPrompt, { itemId: item.id, name: `motion_${shot.idx}`, durationSec: shot.durationSec })
-      await prisma.asset.create({
-        data: { contentItemId: item.id, kind: 'motion_clip', shotIndex: shot.idx, provider: labels.motion, path: clip.path, meta: clip.meta as object, isMock: clip.isMock },
+    if (outOfTime()) break
+
+    let img = imageByShot.get(shot.idx)
+    if (!img) {
+      const gen = await providers.image.generateImage(shot.imagePrompt, { itemId: item.id, name: `shot_${shot.idx}` })
+      img = await prisma.asset.create({
+        data: { contentItemId: item.id, kind: 'shot_image', shotIndex: shot.idx, provider: labels.image, path: gen.path, meta: gen.meta as object, isMock: gen.isMock },
       })
+      made++
+    }
+
+    if (shot.type === 'motion' && shot.motionPrompt && !motionDone.has(shot.idx)) {
+      const motionOpts = { itemId: item.id, name: `motion_${shot.idx}`, durationSec: shot.durationSec }
+      const imageFile = { path: img.path, meta: (img.meta ?? {}) as Record<string, unknown>, isMock: img.isMock }
+      const jobKey = `motion_job:${item.id}:${shot.idx}`
+
+      // 云端异步两段式:一段视频要 60-90 秒,同步等必然超函数上限
+      if (providers.motion.startMotion && providers.motion.pollMotion) {
+        const saved = await prisma.setting.findUnique({ where: { key: jobKey } })
+        let jobId = (saved?.value as { jobId?: string } | null)?.jobId
+
+        if (!jobId) {
+          if (outOfTime()) break
+          jobId = (await providers.motion.startMotion(imageFile, shot.motionPrompt, motionOpts)).jobId
+          await prisma.setting.upsert({
+            where: { key: jobKey },
+            update: { value: { jobId } },
+            create: { key: jobKey, value: { jobId } },
+          })
+          continue // 这一轮先不等,下一次 advance 来取
+        }
+
+        const clip = await providers.motion.pollMotion(jobId, motionOpts)
+        if (!clip) continue // 还在跑,下一轮再来
+        await prisma.asset.create({
+          data: { contentItemId: item.id, kind: 'motion_clip', shotIndex: shot.idx, provider: labels.motion, path: clip.path, meta: clip.meta as object, isMock: clip.isMock },
+        })
+        await prisma.setting.delete({ where: { key: jobKey } }).catch(() => {})
+        made++
+      } else {
+        // 同步路径(mock / 自托管无超时限制)
+        if (outOfTime()) break
+        const clip = await providers.motion.generateMotion(imageFile, shot.motionPrompt, motionOpts)
+        await prisma.asset.create({
+          data: { contentItemId: item.id, kind: 'motion_clip', shotIndex: shot.idx, provider: labels.motion, path: clip.path, meta: clip.meta as object, isMock: clip.isMock },
+        })
+        made++
+      }
     }
   }
-  return { images: shots.length + 1, motionClips: shots.filter((s) => s.type === 'motion').length }
+
+  // 统计还差多少
+  const after = await prisma.asset.findMany({
+    where: { contentItemId: item.id, kind: { in: ['cover_bg', 'shot_image', 'motion_clip'] } },
+    select: { kind: true, shotIndex: true },
+  })
+  const doneImages = after.filter((a) => a.kind === 'shot_image').length
+  const doneMotions = after.filter((a) => a.kind === 'motion_clip').length
+  const wantMotions = shots.filter((s) => s.type === 'motion' && s.motionPrompt).length
+  const remaining = shots.length - doneImages + (wantMotions - doneMotions)
+
+  if (remaining > 0) {
+    return { madeThisRound: made, images: doneImages, motionClips: doneMotions, remaining, stayInStage: true }
+  }
+  return { images: doneImages + 1, motionClips: doneMotions }
 }
 
 async function runVoiceover(item: ItemWithRelations) {

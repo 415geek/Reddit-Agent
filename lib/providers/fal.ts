@@ -108,29 +108,63 @@ export const falImage: ImageGenProvider = {
   },
 }
 
+function motionBody(imageUrl: string, motionPrompt: string, durationSec: number) {
+  return {
+    prompt: motionPrompt,
+    image_url: imageUrl,
+    aspect_ratio: '9:16',
+    resolution: '1080p',
+    // duration 只接受 2-12 秒的整数
+    duration: String(Math.max(2, Math.min(12, Math.round(durationSec)))),
+  }
+}
+
 export const falMotion: MotionGenProvider = {
+  /** 同步版:自托管/长超时环境用 */
   async generateMotion(image, motionPrompt, opts): Promise<GeneratedFile> {
-    // Seedance 需要公网可访问的图片地址;直接复用上一步 fal 返回的托管 URL
     const imageUrl = image.meta?.sourceUrl as string | undefined
     if (!imageUrl) throw new Error('缺少图片公网地址(sourceUrl),无法做图生视频')
-
-    // duration 只接受 2-12 秒的整数
-    const duration = String(Math.max(2, Math.min(12, Math.round(opts.durationSec))))
-    const out = await falQueue<{ video: { url: string } }>(MOTION_MODEL, {
-      prompt: motionPrompt,
-      image_url: imageUrl,
-      aspect_ratio: '9:16',
-      resolution: '1080p',
-      duration,
-    })
+    const out = await falQueue<{ video: { url: string } }>(MOTION_MODEL, motionBody(imageUrl, motionPrompt, opts.durationSec))
     if (!out.video?.url) throw new Error('fal 图生视频返回为空')
     const rel = `items/${opts.itemId}/${opts.name}.mp4`
     await download(out.video.url, rel)
-    return {
-      path: rel,
-      meta: { motionPrompt: motionPrompt.slice(0, 500), model: MOTION_MODEL, sourceImage: image.path, durationSec: Number(duration) },
-      isMock: false,
-    }
+    return { path: rel, meta: { motionPrompt: motionPrompt.slice(0, 500), model: MOTION_MODEL, sourceImage: image.path }, isMock: false }
+  },
+
+  /** 只提交,不等待——serverless 下必须这样,否则单段就超时 */
+  async startMotion(image, motionPrompt, opts) {
+    const imageUrl = image.meta?.sourceUrl as string | undefined
+    if (!imageUrl) throw new Error('缺少图片公网地址(sourceUrl),无法做图生视频')
+    const res = await fetch(`${QUEUE_BASE}/${MOTION_MODEL}`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify(motionBody(imageUrl, motionPrompt, opts.durationSec)),
+    })
+    const text = await res.text()
+    if (!res.ok) throw new Error(`fal 图生视频提交失败 ${res.status}: ${text.slice(0, 400)}`)
+    const { request_id } = JSON.parse(text) as { request_id: string }
+    if (!request_id) throw new Error('fal 未返回 request_id')
+    return { jobId: request_id }
+  },
+
+  /** 查一次状态:没好返回 null,好了就下载落盘 */
+  async pollMotion(jobId, opts) {
+    // fal 的队列路径用的是模型的 owner 前缀(如 fal-ai/bytedance),不是完整模型路径
+    const owner = MOTION_MODEL.split('/').slice(0, 2).join('/')
+    const st = await fetch(`${QUEUE_BASE}/${owner}/requests/${jobId}/status`, { headers: headers() })
+    if (!st.ok) throw new Error(`fal 查状态失败 ${st.status}: ${(await st.text()).slice(0, 300)}`)
+    const { status } = (await st.json()) as { status: string }
+    if (status === 'IN_QUEUE' || status === 'IN_PROGRESS') return null
+    if (status !== 'COMPLETED') throw new Error(`fal 图生视频任务异常: ${status}`)
+
+    const out = await fetch(`${QUEUE_BASE}/${owner}/requests/${jobId}`, { headers: headers() })
+    const outText = await out.text()
+    if (!out.ok) throw new Error(`fal 取结果失败 ${out.status}: ${outText.slice(0, 300)}`)
+    const { video } = JSON.parse(outText) as { video?: { url: string } }
+    if (!video?.url) throw new Error('fal 图生视频返回为空')
+    const rel = `items/${opts.itemId}/${opts.name}.mp4`
+    await download(video.url, rel)
+    return { path: rel, meta: { model: MOTION_MODEL, jobId }, isMock: false }
   },
 }
 

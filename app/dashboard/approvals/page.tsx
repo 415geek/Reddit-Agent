@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { COVER_TEMPLATE_LABELS, ScriptBeats, Shot } from '@/lib/domain'
 import { ApprovalActions } from './approval-actions'
+import { AssetPreview } from './asset-preview'
 
 const BEAT_LABELS: Array<[keyof ScriptBeats, string]> = [
   ['hook', '0-3秒 · 反常识钩子'],
@@ -105,7 +106,7 @@ export default async function ApprovalsPage() {
                     </details>
                   )}
                 </div>
-                <div>
+                <div className="space-y-4">
                   <p className="text-xs font-semibold text-gray-500 mb-2">封面预览(1080×1920)</p>
                   <div className="rounded-lg overflow-hidden border bg-black" style={{ aspectRatio: '9/16' }}>
                     <iframe
@@ -115,6 +116,13 @@ export default async function ApprovalsPage() {
                       title={`cover-${item.id}`}
                     />
                   </div>
+                  <AssetPreview
+                    shots={shots}
+                    assets={item.assets.map((a) => ({
+                      id: a.id, kind: a.kind, shotIndex: a.shotIndex,
+                      provider: a.provider, path: a.path, isMock: a.isMock,
+                    }))}
+                  />
                 </div>
               </div>
             </CardContent>
