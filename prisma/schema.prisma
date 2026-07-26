@@ -123,6 +123,7 @@ model Storyboard {
   contentItemId String
   version       Int      @default(1)
   shots         Json // [{idx, type: image|motion, imagePrompt, motionPrompt?, durationSec, cameraMove, narration}]
+  bgmMood       String? // suspense | momentum | insight | warm(由分镜模型选,空则按封面模板兜底)
   createdAt     DateTime @default(now())
 
   contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
@@ -136,7 +137,7 @@ model Storyboard {
 model Asset {
   id            String   @id @default(cuid())
   contentItemId String
-  kind          String // cover_bg | cover_final | shot_image | motion_clip | voiceover | subtitle | final_video
+  kind          String // cover_bg | cover_final | shot_image | motion_clip | voiceover | bgm | subtitle | final_video
   shotIndex     Int?
   provider      String // mock | seedream | seedance | doubao | remotion
   path          String

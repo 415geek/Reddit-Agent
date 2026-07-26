@@ -40,9 +40,22 @@ export interface TTSProvider {
   synthesize(text: string, opts: { itemId: string; name: string; voice?: string }): Promise<GeneratedFile>
 }
 
+export interface BgmOpts {
+  itemId: string
+  name: string
+  mood: string
+  /** 目标时长(秒)。合成时会按成片长度裁切/循环,这里只是尽量一次到位 */
+  durationSec: number
+}
+
+export interface BgmProvider {
+  /** 背景音乐:返回一条纯器乐音轨,合成时压低垫在旁白下面 */
+  provide(opts: BgmOpts): Promise<GeneratedFile | null>
+}
+
 export interface ComposeProvider {
   /** 视频合成(Remotion/FFmpeg worker,Phase 2) */
-  compose(opts: { itemId: string; shots: unknown[]; voiceoverPath: string; coverPath?: string }): Promise<GeneratedFile>
+  compose(opts: { itemId: string; shots: unknown[]; voiceoverPath: string; bgmPath?: string; coverPath?: string }): Promise<GeneratedFile>
 }
 
 export interface PublisherProvider {
@@ -54,6 +67,7 @@ export interface MediaProviders {
   image: ImageGenProvider
   motion: MotionGenProvider
   tts: TTSProvider
+  bgm: BgmProvider
   compose: ComposeProvider
   publisher: PublisherProvider
 }

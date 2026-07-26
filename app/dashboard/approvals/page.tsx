@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic'
 import { prisma } from '@/lib/prisma'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { COVER_TEMPLATE_LABELS, ScriptBeats, Shot } from '@/lib/domain'
+import { BgmMood, COVER_TEMPLATE_LABELS, ScriptBeats, Shot } from '@/lib/domain'
 import { ApprovalActions } from './approval-actions'
 import { AssetPreview } from './asset-preview'
 
@@ -118,6 +118,10 @@ export default async function ApprovalsPage() {
                   </div>
                   <AssetPreview
                     shots={shots}
+                    bgmMood={
+                      (item.storyboards[0]?.bgmMood ??
+                        (item.assets.find((a) => a.kind === 'bgm')?.meta as { mood?: string } | null)?.mood) as BgmMood | null
+                    }
                     assets={item.assets.map((a) => ({
                       id: a.id, kind: a.kind, shotIndex: a.shotIndex,
                       provider: a.provider, path: a.path, isMock: a.isMock,

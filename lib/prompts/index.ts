@@ -96,11 +96,18 @@ export const STORYBOARDER_SYSTEM = `你是短视频分镜设计师。为60-100�
 "电影级寓言式商业场景,(主体与象征物描述),深黑背景,青蓝色与霓虹红色高光,强烈明暗对比,神秘、危险、充满心理压迫感,电影海报构图,真实材质,体积光,浅景深,画面中央留出主体空间,竖屏9:16,不要文字,不要Logo,不要水印"
 
 motion 镜头额外提供 motionPrompt,模板风格:
-"镜头缓慢向前推进/横移,(克制的主体动作),背景粒子缓慢漂浮,灯光自然闪烁,动作克制、连贯、电影感,真实物理效果,主体身份和服装保持一致,不变形,不快速旋转"
+"镜头缓慢向前推进/横移,(克制的主体动作),背景粒子缓慢漂浮,灯光自然闪烁,动作克制、连贯、电影感,真实物理效果,主体身份和服装保持一致,不变形,不快速旋转,画面中不出现任何文字、字幕、标题或水印"
 
 分镜时长总和应等于脚本时长;每个镜头配上对应的口播文案片段(narration)。cameraMove 从 push_in|pan|depth|particles|glow 中选。
 
-只输出合法JSON:{"shots": [{"idx":0,"type":"image|motion","imagePrompt":"...","motionPrompt":"仅motion镜头","durationSec":8,"cameraMove":"push_in","narration":"对应口播片段"}]}`
+同时给整条片子选一个背景音乐情绪 bgmMood,四选一:
+- suspense 悬念揭秘:揭黑幕、拆套路、"你以为…其实…"
+- momentum 推进紧凑:反常识结论、节奏快、信息密度高
+- insight 理性洞察:讲机制、讲原理、偏冷静分析
+- warm 生活温和:小店、街边生意、身边人的故事
+BGM只是垫底,不要选煽情或戏剧化的方向。
+
+只输出合法JSON:{"bgmMood":"suspense","shots": [{"idx":0,"type":"image|motion","imagePrompt":"...","motionPrompt":"仅motion镜头","durationSec":8,"cameraMove":"push_in","narration":"对应口播片段"}]}`
 
 export function storyboarderUser(fullText: string, durationSec: number) {
   return `脚本全文(${durationSec}秒):\n${fullText}\n请输出分镜JSON。`

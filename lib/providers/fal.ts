@@ -1,5 +1,6 @@
+import { BGM_MOOD_PROMPTS, type BgmMood } from '../domain'
 import { saveAsset } from '../storage'
-import type { GeneratedFile, ImageGenProvider, MotionGenProvider, TTSProvider } from './types'
+import type { BgmProvider, GeneratedFile, ImageGenProvider, MotionGenProvider, TTSProvider } from './types'
 
 /**
  * fal.ai 接入:Seedream 文生图 / Seedance 图生视频 / MiniMax 中文TTS。
@@ -16,6 +17,9 @@ const IMAGE_MODEL = process.env.FAL_IMAGE_MODEL || 'fal-ai/bytedance/seedream/v4
 const MOTION_MODEL = process.env.FAL_MOTION_MODEL || 'fal-ai/bytedance/seedance/v1/pro/image-to-video'
 const TTS_MODEL = process.env.FAL_TTS_MODEL || 'fal-ai/minimax/speech-02-hd'
 const TTS_VOICE = process.env.FAL_TTS_VOICE || 'Wise_Woman'
+// 背景音乐。cassetteai 严格按 duration 出整段,动态起伏也比 ace-step 小——
+// BGM 要的就是"平",起伏大的音乐压在旁白下面会一会儿盖住人声、一会儿消失。
+const MUSIC_MODEL = process.env.FAL_MUSIC_MODEL || 'cassetteai/music-generator'
 
 function falKey() {
   const key = process.env.FAL_KEY
@@ -165,6 +169,26 @@ export const falMotion: MotionGenProvider = {
     const rel = `items/${opts.itemId}/${opts.name}.mp4`
     await download(video.url, rel)
     return { path: rel, meta: { model: MOTION_MODEL, jobId }, isMock: false }
+  },
+}
+
+/**
+ * 出一段纯器乐 BGM。
+ * 注意:一次要跑 30-90 秒,超过 Vercel 的函数上限——所以按每条视频现生成
+ * (BGM_MODE=generate)只适合自托管;云上默认走 BGM_MODE=library,
+ * 用 scripts/build-bgm-library.mjs 预先生成好的曲库。
+ */
+export const falBgm: BgmProvider = {
+  async provide(opts): Promise<GeneratedFile> {
+    const prompt = BGM_MOOD_PROMPTS[opts.mood as BgmMood] ?? BGM_MOOD_PROMPTS.insight
+    // 留 8 秒余量:成片长度按分镜估算,实际配音可能略长,宁可音乐多出一截被裁掉
+    const duration = Math.max(20, Math.min(180, Math.round(opts.durationSec) + 8))
+    const out = await falRun<{ audio_file?: { url: string }; audio?: { url: string } }>(MUSIC_MODEL, { prompt, duration })
+    const url = out.audio_file?.url || out.audio?.url
+    if (!url) throw new Error('fal 出BGM返回为空')
+    const rel = `items/${opts.itemId}/${opts.name}.wav`
+    await download(url, rel)
+    return { path: rel, meta: { mood: opts.mood, model: MUSIC_MODEL, durationSec: duration, prompt }, isMock: false }
   },
 }
 

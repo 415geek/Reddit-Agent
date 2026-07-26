@@ -59,6 +59,47 @@ export const COVER_TEMPLATE_LABELS: Record<string, string> = {
   control: '控制型',
 }
 
+/**
+ * 背景音乐情绪。知识类账号的BGM只有一个职责:垫住旁白、制造节奏,
+ * 不能抢话——所以四种都是器乐、无人声、动态范围小的"底噪型"音乐。
+ */
+export const BGM_MOODS = ['suspense', 'momentum', 'insight', 'warm'] as const
+export type BgmMood = (typeof BGM_MOODS)[number]
+export const BGM_MOOD_LABELS: Record<BgmMood, string> = {
+  suspense: '悬念揭秘',
+  momentum: '推进紧凑',
+  insight: '理性洞察',
+  warm: '生活温和',
+}
+
+/** 生成/挑选BGM用的音乐描述词。统一强调 instrumental、no vocals、低起伏 */
+export const BGM_MOOD_PROMPTS: Record<BgmMood, string> = {
+  suspense:
+    'dark minimal cinematic underscore, sparse low piano notes, sustained bass drone, subtle ticking pulse, restrained tension, no vocals, no drum buildup, no big climax, steady low dynamics, background bed for spoken narration, instrumental',
+  momentum:
+    'modern minimal electronic underscore, steady muted pulse, light arpeggiated synth, forward driving but understated, no vocals, no drop, no aggressive percussion, even dynamics, background bed for spoken narration, instrumental',
+  insight:
+    'calm analytical ambient underscore, clean sustained pads, occasional soft marimba or bell, spacious and neutral, no vocals, no melody hook, very even dynamics, background bed for spoken narration, instrumental',
+  warm: 'warm acoustic underscore, soft nylon guitar and light rhodes, gentle everyday optimism, unhurried, no vocals, no strong beat, even dynamics, background bed for spoken narration, instrumental',
+}
+
+/** 分镜没给情绪时的兜底:按封面模板推。三种模板本来就对应三种叙事张力 */
+const COVER_TEMPLATE_BGM: Record<CoverTemplate, BgmMood> = {
+  truth: 'suspense',
+  counter: 'momentum',
+  control: 'insight',
+}
+
+/**
+ * 决定这条内容用哪种BGM。优先用分镜模型给的,给错或没给就按选题推:
+ * 餐饮小生意讲的是身边人的日子,配悬疑乐会很怪,所以按品类先兜一层。
+ */
+export function pickBgmMood(input: { bgmMood?: string | null; coverTemplate: string; category?: string | null }): BgmMood {
+  if (input.bgmMood && (BGM_MOODS as readonly string[]).includes(input.bgmMood)) return input.bgmMood as BgmMood
+  if (input.category === 'business_case') return 'warm'
+  return COVER_TEMPLATE_BGM[input.coverTemplate as CoverTemplate] ?? 'insight'
+}
+
 // 选题评分维度与权重(用户蓝图)
 export const SCORE_WEIGHTS = {
   conflict: 0.25, // 点击冲突

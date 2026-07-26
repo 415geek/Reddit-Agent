@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { Shot } from '@/lib/domain'
+import { BGM_MOOD_LABELS, BgmMood, Shot } from '@/lib/domain'
 
 interface AssetLite {
   id: string
@@ -18,7 +18,7 @@ const isPlayableAudio = (p: string) => /\.(mp3|wav|m4a)$/i.test(p)
  * 审批时要看的东西:每个镜头的画面 + 动态片段、配音、成片。
  * 占位产物(mock)明确标出来,免得把占位当成品批准了。
  */
-export function AssetPreview({ shots, assets }: { shots: Shot[]; assets: AssetLite[] }) {
+export function AssetPreview({ shots, assets, bgmMood }: { shots: Shot[]; assets: AssetLite[]; bgmMood?: BgmMood | null }) {
   const [active, setActive] = useState<number | null>(null)
 
   const byShot = new Map<number, { image?: AssetLite; motion?: AssetLite }>()
@@ -32,6 +32,7 @@ export function AssetPreview({ shots, assets }: { shots: Shot[]; assets: AssetLi
   const voiceover = assets.find((a) => a.kind === 'voiceover')
   const finalVideo = assets.find((a) => a.kind === 'final_video')
   const subtitle = assets.find((a) => a.kind === 'subtitle')
+  const bgm = assets.find((a) => a.kind === 'bgm')
 
   const url = (p: string) => `/api/assets/${p}`
 
@@ -66,6 +67,25 @@ export function AssetPreview({ shots, assets }: { shots: Shot[]; assets: AssetLi
           <a href={url(subtitle.path)} target="_blank" className="text-xs text-blue-600 hover:underline">
             查看字幕 SRT ↗
           </a>
+        )}
+      </div>
+
+      {/* 背景音乐:成片里它被压低并做了闪避,这里是原曲,方便判断合不合调性 */}
+      <div>
+        <p className="text-xs font-semibold text-gray-500 mb-2">
+          背景音乐
+          {bgmMood && <span className="ml-2 text-gray-400">{BGM_MOOD_LABELS[bgmMood] ?? bgmMood}</span>}
+          {bgm?.isMock && <span className="ml-2 text-amber-600">占位静音</span>}
+        </p>
+        {bgm && isPlayableAudio(bgm.path) ? (
+          <>
+            <audio src={url(bgm.path)} controls className="w-full" />
+            <p className="text-[11px] text-gray-400 mt-1">
+              {bgm.provider === 'library' ? '取自曲库' : `${bgm.provider} 生成`} · 成片中压低约 20dB 并随人声自动闪避
+            </p>
+          </>
+        ) : (
+          <p className="text-sm text-gray-400">这条没有配乐</p>
         )}
       </div>
 

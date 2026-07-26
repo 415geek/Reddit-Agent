@@ -1,5 +1,5 @@
-import { mockCompose, mockImage, mockMotion, mockPublisher, mockTts } from './mock'
-import { falImage, falMotion, falTts } from './fal'
+import { mockBgm, mockCompose, mockImage, mockMotion, mockPublisher, mockTts } from './mock'
+import { falBgm, falImage, falMotion, falTts } from './fal'
 import { doubaoTts, douyinPublisher, seedanceMotion, seedreamImage, volcCompose } from './volcengine'
 import type { MediaProviders } from './types'
 
@@ -12,11 +12,11 @@ import type { MediaProviders } from './types'
 export function getMediaProviders(): MediaProviders {
   switch (process.env.MEDIA_PROVIDER) {
     case 'fal':
-      return { image: falImage, motion: falMotion, tts: falTts, compose: mockCompose, publisher: mockPublisher }
+      return { image: falImage, motion: falMotion, tts: falTts, bgm: falBgm, compose: mockCompose, publisher: mockPublisher }
     case 'volcengine':
-      return { image: seedreamImage, motion: seedanceMotion, tts: doubaoTts, compose: volcCompose, publisher: douyinPublisher }
+      return { image: seedreamImage, motion: seedanceMotion, tts: doubaoTts, bgm: falBgm, compose: volcCompose, publisher: douyinPublisher }
     default:
-      return { image: mockImage, motion: mockMotion, tts: mockTts, compose: mockCompose, publisher: mockPublisher }
+      return { image: mockImage, motion: mockMotion, tts: mockTts, bgm: mockBgm, compose: mockCompose, publisher: mockPublisher }
   }
 }
 
@@ -24,10 +24,10 @@ export function getMediaProviders(): MediaProviders {
 export function providerLabels() {
   switch (process.env.MEDIA_PROVIDER) {
     case 'fal':
-      return { image: 'seedream', motion: 'seedance', tts: 'minimax' }
+      return { image: 'seedream', motion: 'seedance', tts: 'minimax', bgm: 'cassetteai' }
     case 'volcengine':
-      return { image: 'seedream', motion: 'seedance', tts: 'doubao' }
+      return { image: 'seedream', motion: 'seedance', tts: 'doubao', bgm: 'cassetteai' }
     default:
-      return { image: 'mock', motion: 'mock', tts: 'mock' }
+      return { image: 'mock', motion: 'mock', tts: 'mock', bgm: 'mock' }
   }
 }

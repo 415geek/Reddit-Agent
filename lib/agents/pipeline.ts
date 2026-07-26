@@ -1,6 +1,7 @@
 import { prisma } from '../prisma'
 import { generateJSON } from '../ai'
-import { QcReport, ResearchOutput, ScriptBeats, Shot, STAGES, Stage } from '../domain'
+import { QcReport, ResearchOutput, ScriptBeats, Shot, STAGES, Stage, pickBgmMood } from '../domain'
+import { ensureBgmAsset } from '../bgm'
 import {
   QC_SYSTEM,
   RESEARCHER_SYSTEM,
@@ -87,7 +88,8 @@ async function runScript(item: ItemWithRelations) {
       version,
       beats: out.beats as unknown as object,
       fullText: out.fullText,
-      durationEstSec: out.durationEstSec,
+      // 不用模型自报的 durationEstSec:实测它系统性低估。按字数算才和配音对得上。
+      durationEstSec: estimateDurationSec(out.fullText),
     },
   })
   await prisma.contentItem.update({
@@ -97,24 +99,29 @@ async function runScript(item: ItemWithRelations) {
       coverTemplate: ['truth', 'counter', 'control'].includes(out.coverTemplate) ? out.coverTemplate : 'truth',
     },
   })
-  return { version, durationEstSec: out.durationEstSec }
+  return { version, durationEstSec: estimateDurationSec(out.fullText), chars: scriptChars(out.fullText) }
 }
 
 async function runStoryboard(item: ItemWithRelations) {
   const script = item.scripts[0]
   if (!script) throw new Error('缺少脚本,无法做分镜')
-  const out = await generateJSON<{ shots: Shot[] }>({
+  const out = await generateJSON<{ shots: Shot[]; bgmMood?: string }>({
     system: STORYBOARDER_SYSTEM,
     user: storyboarderUser(script.fullText, script.durationEstSec),
     maxTokens: 8192,
     mockKey: 'storyboard',
   })
   if (!out.shots?.length) throw new Error('分镜为空')
+  const bgmMood = pickBgmMood({
+    bgmMood: out.bgmMood,
+    coverTemplate: item.coverTemplate,
+    category: item.topic?.category,
+  })
   const version = (item.storyboards[0]?.version ?? 0) + 1
   await prisma.storyboard.create({
-    data: { contentItemId: item.id, version, shots: out.shots as unknown as object },
+    data: { contentItemId: item.id, version, shots: out.shots as unknown as object, bgmMood },
   })
-  return { shots: out.shots.length, motionShots: out.shots.filter((s) => s.type === 'motion').length }
+  return { shots: out.shots.length, motionShots: out.shots.filter((s) => s.type === 'motion').length, bgmMood }
 }
 
 /**
@@ -123,6 +130,16 @@ async function runStoryboard(item: ItemWithRelations) {
  * 所以这一阶段做成可续跑:每次只做到预算用完,已完成的资产跳过,反复调用直到做完。
  */
 const ASSET_BUDGET_MS = Number(process.env.ASSET_BUDGET_MS || 40_000)
+
+/**
+ * 图生视频的否定约束。实测 Seedance 会自作主张给画面配上中文大标题和角标,
+ * 而且多半是乱码,还会和我们烧上去的字幕叠在一起。分镜提示词里写一句不够,
+ * 在调用前统一补一遍。
+ */
+function cleanMotionPrompt(prompt: string) {
+  const base = prompt.replace(/,?\s*画面中不出现任何文字、字幕、标题或水印\s*$/, '')
+  return `${base},画面中绝对不能出现任何文字、字幕、标题、角标、logo 或水印`
+}
 
 async function runAssets(item: ItemWithRelations) {
   const storyboard = item.storyboards[0]
@@ -170,6 +187,9 @@ async function runAssets(item: ItemWithRelations) {
     }
 
     if (shot.type === 'motion' && shot.motionPrompt && !motionDone.has(shot.idx)) {
+      // 和封面同样的教训:图生视频模型很爱自己往画面里加中文标题和角标,
+      // 生成的还多半是乱码,又会和我们烧上去的字幕打架,所以在这里硬加否定约束。
+      const motionPrompt = cleanMotionPrompt(shot.motionPrompt)
       const motionOpts = { itemId: item.id, name: `motion_${shot.idx}`, durationSec: shot.durationSec }
       const imageFile = { path: img.path, meta: (img.meta ?? {}) as Record<string, unknown>, isMock: img.isMock }
       const jobKey = `motion_job:${item.id}:${shot.idx}`
@@ -181,7 +201,7 @@ async function runAssets(item: ItemWithRelations) {
 
         if (!jobId) {
           if (outOfTime()) break
-          jobId = (await providers.motion.startMotion(imageFile, shot.motionPrompt, motionOpts)).jobId
+          jobId = (await providers.motion.startMotion(imageFile, motionPrompt, motionOpts)).jobId
           await prisma.setting.upsert({
             where: { key: jobKey },
             update: { value: { jobId } },
@@ -200,7 +220,7 @@ async function runAssets(item: ItemWithRelations) {
       } else {
         // 同步路径(mock / 自托管无超时限制)
         if (outOfTime()) break
-        const clip = await providers.motion.generateMotion(imageFile, shot.motionPrompt, motionOpts)
+        const clip = await providers.motion.generateMotion(imageFile, motionPrompt, motionOpts)
         await prisma.asset.create({
           data: { contentItemId: item.id, kind: 'motion_clip', shotIndex: shot.idx, provider: labels.motion, path: clip.path, meta: clip.meta as object, isMock: clip.isMock },
         })
@@ -259,7 +279,16 @@ async function runVoiceover(item: ItemWithRelations) {
       data: { contentItemId: item.id, kind: 'subtitle', provider: 'mock', path: rel, meta: { cues: shots.length }, isMock: false },
     })
   }
-  return { chars: script.fullText.length }
+
+  // BGM 和配音一起定下来,审批时能连着旁白一起试听
+  const mood = pickBgmMood({
+    bgmMood: storyboard?.bgmMood,
+    coverTemplate: item.coverTemplate,
+    category: item.topic?.category,
+  })
+  const bgm = await ensureBgmAsset(item.id, mood, script.durationEstSec)
+
+  return { chars: script.fullText.length, bgmMood: mood, bgm: bgm?.path ?? null }
 }
 
 async function runCompose(item: ItemWithRelations) {
@@ -267,11 +296,25 @@ async function runCompose(item: ItemWithRelations) {
   const voiceover = item.assets.find((a) => a.kind === 'voiceover') ??
     (await prisma.asset.findFirst({ where: { contentItemId: item.id, kind: 'voiceover' } }))
   if (!storyboard || !voiceover) throw new Error('缺少分镜或配音,无法合成')
+
+  // 已经有真成片了(外部 worker 交过货),直接过
+  const done = item.assets.find((a) => a.kind === 'final_video' && !a.isMock)
+  if (done) return { path: done.path, composedBy: 'worker' }
+
+  // COMPOSE_MODE=worker:合成交给自托管的 FFmpeg worker。
+  // 它会 12 张图 + 3 段视频 + 旁白 + BGM 烧成一条 90 秒竖屏片,几分钟起步,
+  // 既超 serverless 函数上限也没有 FFmpeg 可用,所以这里只等,不干活。
+  if (process.env.COMPOSE_MODE === 'worker') {
+    return { waitingForWorker: true, stayInStage: true }
+  }
+
+  const bgm = item.assets.find((a) => a.kind === 'bgm')
   const providers = getMediaProviders()
   const final = await providers.compose.compose({
     itemId: item.id,
     shots: storyboard.shots as unknown as unknown[],
     voiceoverPath: voiceover.path,
+    bgmPath: bgm?.path,
   })
   await prisma.asset.create({
     data: { contentItemId: item.id, kind: 'final_video', provider: final.isMock ? 'mock' : 'remotion', path: final.path, meta: final.meta as object, isMock: final.isMock },
@@ -281,6 +324,33 @@ async function runCompose(item: ItemWithRelations) {
 
 /** 质检不通过时最多返工几次(每次带着质检意见重写脚本) */
 const MAX_SCRIPT_REVISIONS = 2
+
+/** 中文口播实测语速。用 MiniMax 默认语速念,约 4.5 字/秒 */
+export const CHARS_PER_SEC = Number(process.env.SCRIPT_CHARS_PER_SEC || 4.5)
+
+/** 只数正文字数,标点和空白不占时间 */
+export function scriptChars(fullText: string) {
+  return fullText.replace(/[\s,，。!！?？;；、:：""''()()《》—…·]/g, '').length
+}
+
+export function estimateDurationSec(fullText: string) {
+  return Math.round(scriptChars(fullText) / CHARS_PER_SEC)
+}
+
+/** 超出 60-100 秒就返回一句可执行的返工意见,合规才返回 null */
+function scriptLengthIssue(fullText: string): string | null {
+  const chars = scriptChars(fullText)
+  const sec = estimateDurationSec(fullText)
+  if (sec > 100) {
+    const target = Math.round(95 * CHARS_PER_SEC)
+    return `全文${chars}字,按4.5字/秒念出来约${sec}秒,超过100秒上限。请压缩到${target}字以内:删掉重复论证和铺垫,保留钩子、原理、案例、行动这四件事。`
+  }
+  if (sec < 55) {
+    const target = Math.round(70 * CHARS_PER_SEC)
+    return `全文${chars}字,约${sec}秒,不足60秒。请补到${target}字左右:把原理讲透一层,或补一个研究资料里有来源的细节。`
+  }
+  return null
+}
 
 async function runQc(item: ItemWithRelations) {
   const script = item.scripts[0]
@@ -294,6 +364,16 @@ async function runQc(item: ItemWithRelations) {
     maxTokens: 2048,
     mockKey: 'qc',
   })
+
+  // 时长不交给模型判断——它报的 durationEstSec 和实际念出来的差得远(实测一条
+  // 581 字的稿子自报 92 秒,配音出来 126 秒)。字数是唯一算得准的,超了就退回重写。
+  const lengthIssue = scriptLengthIssue(script.fullText)
+  if (lengthIssue) {
+    report.passed = false
+    report.durationOk = false
+    report.complianceIssues = [...(report.complianceIssues ?? []), lengthIssue]
+  }
+
   await prisma.script.update({
     where: { id: script.id },
     data: { qcReport: report as unknown as object, status: report.passed ? 'passed_qc' : 'failed_qc' },
@@ -330,7 +410,7 @@ async function runQc(item: ItemWithRelations) {
       version: script.version + 1,
       beats: revised.beats as unknown as object,
       fullText: revised.fullText,
-      durationEstSec: revised.durationEstSec,
+      durationEstSec: estimateDurationSec(revised.fullText),
     },
   })
   await prisma.contentItem.update({

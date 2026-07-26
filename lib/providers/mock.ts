@@ -1,5 +1,5 @@
 import { saveAsset } from '../storage'
-import type { ComposeProvider, GeneratedFile, ImageGenProvider, MotionGenProvider, PublisherProvider, TTSProvider } from './types'
+import type { BgmProvider, ComposeProvider, GeneratedFile, ImageGenProvider, MotionGenProvider, PublisherProvider, TTSProvider } from './types'
 
 // Mock 实现:无任何外部 key 时让全流程跑通。生成占位 SVG/WAV/文本文件。
 
@@ -63,11 +63,22 @@ export const mockTts: TTSProvider = {
   },
 }
 
+export const mockBgm: BgmProvider = {
+  async provide(opts): Promise<GeneratedFile> {
+    const rel = `items/${opts.itemId}/${opts.name}.wav`
+    await saveAsset(rel, silentWav())
+    return { path: rel, meta: { mood: opts.mood, mock: true }, isMock: true }
+  },
+}
+
 export const mockCompose: ComposeProvider = {
   async compose(opts): Promise<GeneratedFile> {
     const rel = `items/${opts.itemId}/final.mp4.txt`
-    await saveAsset(rel, `MOCK FINAL VIDEO\nshots: ${opts.shots.length}\nvoiceover: ${opts.voiceoverPath}\n合成worker(Remotion/FFmpeg)在 Phase 2 接入,见 README。`)
-    return { path: rel, meta: { shotCount: opts.shots.length }, isMock: true }
+    await saveAsset(
+      rel,
+      `MOCK FINAL VIDEO\nshots: ${opts.shots.length}\nvoiceover: ${opts.voiceoverPath}\nbgm: ${opts.bgmPath ?? '(无)'}\n真合成请设 COMPOSE_MODE=worker 并起 worker/(FFmpeg),见 README。`,
+    )
+    return { path: rel, meta: { shotCount: opts.shots.length, bgmPath: opts.bgmPath ?? null }, isMock: true }
   },
 }
 

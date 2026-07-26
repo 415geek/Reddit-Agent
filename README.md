@@ -14,8 +14,8 @@
   → 资料研究Agent(强制来源,禁止编造)           n8n 02 循环调用 advance
   → 脚本Agent(60-100秒五段结构)
   → 分镜Agent(8-12张图 + 2-3个动态镜头)
-  → Seedream生图 / Seedance图生视频 / 豆包TTS配音 / 字幕时间轴
-  → 合成(Phase 2 接 Remotion/FFmpeg worker)
+  → Seedream生图 / Seedance图生视频 / MiniMax配音 / BGM选曲 / 字幕时间轴
+  → 合成(worker/ FFmpeg:运镜 + 旁白与BGM闪避混音 + 烧字幕)
   → AI质检(错字/合规/时长/事实出处)
   → Telegram审批卡片(n8n 03)+ 网页审批队列
   → 人工发抖音(勾选AI声明)→ 看板登记链接        Phase 3 接开放平台
@@ -64,6 +64,56 @@ bash scripts/deploy-vps.sh
 
 之后在 n8n 里导入 `n8n/01~05`,配置环境变量 `FACTORY_APP_URL`、`N8N_WEBHOOK_SECRET`、
 `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`(03 需要 Telegram 凭据)。
+
+## 成片合成与背景音乐
+
+合成不在应用进程里做:一条 90 秒竖屏成片要拼十几段画面、混两轨音频、烧一遍字幕,
+几分钟起步。serverless 既有函数时长上限也没有 FFmpeg,所以做成 worker 去领任务。
+
+```
+应用(可在 Vercel)          worker(自己的服务器,有 FFmpeg)
+  内容进入 compose 阶段   ←── GET  /api/pipeline/compose/next   领任务(带 TTL 认领锁)
+                                 拉素材、合成、直传存储
+  登记成片 → 进审批队列   ←── POST /api/pipeline/compose/:id/complete
+```
+
+成片直传存储(Supabase 或本地卷),不经过应用——serverless 的请求体上限只有几 MB,
+一条成片轻松几十 MB。所以 worker 要和应用配同一套存储环境变量。
+
+跑起来:
+
+```bash
+# 同机 docker compose(worker 服务已在 docker-compose.yml 里)
+docker compose up -d bizbrain-worker
+
+# 或者应用在 Vercel、worker 在自己机器上
+FACTORY_APP_URL=https://your-app.vercel.app N8N_WEBHOOK_SECRET=... \
+SUPABASE_URL=... SUPABASE_KEY=... \
+node worker/compose-worker.mjs          # ONCE=1 只跑一轮
+```
+
+合成做的事:静态图按分镜的 cameraMove 做推近/拉远/横移(否则整条片子是幻灯片)、
+动态镜头对齐时长、**全片时长按真实配音长度重新缩放**(分镜里的秒数是模型估的,
+直接用会画音不同步)、字幕按同一缩放重算后烧进画面。
+
+### 背景音乐
+
+四种情绪(悬念揭秘 / 推进紧凑 / 理性洞察 / 生活温和),由分镜模型选,
+选错或没选就按封面模板和选题品类兜底。混音时 BGM 压低约 20dB 并做**侧链闪避**——
+有人声时音乐自动让路,没人声时回来;固定音量做不到这点,要么盖住讲话,
+要么整条听起来像忘了关的背景音。
+
+默认用曲库(`BGM_MODE=library`),先建一次:
+
+```bash
+FAL_KEY=... SUPABASE_URL=... SUPABASE_KEY=... \
+FACTORY_APP_URL=https://... N8N_WEBHOOK_SECRET=... \
+node scripts/build-bgm-library.mjs 2     # 每种情绪 2 首
+```
+
+用曲库而不是每条现生成,是因为:同一个账号配乐一致才有听觉记忆;曲库里每首都能
+先自己听过再用;而且零边际成本、零等待。想每条都独一无二就设 `BGM_MODE=generate`
+(只适合自托管,一次要等 30-90 秒)。
 
 ## 三阶段上线路线(不要跳步)
 
