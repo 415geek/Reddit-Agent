@@ -8,10 +8,36 @@ import { AdvanceButton } from './advance-button'
 
 const PIPELINE_STAGES = [...STAGES.filter((s) => s !== 'awaiting_approval'), 'awaiting_approval', 'rejected'] as string[]
 
+/**
+ * 图片资产阶段的进度。这一阶段一次推进只做够 40 秒的活,要十几轮才做得完,
+ * 中间还有几轮是在等图生视频返回、什么都不产出——不把进度摆出来,
+ * 卡片每轮都长得一模一样,只会让人以为卡死了。
+ */
+function assetProgress(item: {
+  storyboards: { shots: unknown }[]
+  assets: { kind: string }[]
+}) {
+  const shotList = (item.storyboards[0]?.shots ?? []) as Array<{ type?: string }>
+  const shots = shotList.length
+  if (!shots) return null
+  const wantMotions = shotList.filter((s) => s.type === 'motion').length
+  const images = item.assets.filter((a) => a.kind === 'shot_image').length
+  const motions = item.assets.filter((a) => a.kind === 'motion_clip').length
+  const total = shots + wantMotions
+  const done = Math.min(images, shots) + Math.min(motions, wantMotions)
+  return { shots, wantMotions, images, motions, remaining: Math.max(0, total - done), ratio: total ? done / total : 0 }
+}
+
 export default async function ProductionPage() {
   const items = await prisma.contentItem.findMany({
     where: { stage: { notIn: ['approved', 'published'] } },
-    include: { topic: true, events: { orderBy: { createdAt: 'desc' }, take: 1 } },
+    include: {
+      topic: true,
+      events: { orderBy: { createdAt: 'desc' }, take: 1 },
+      // 资产阶段要能一眼看出做到哪了,不然卡片长得都一样,以为卡住了
+      storyboards: { orderBy: { version: 'desc' }, take: 1 },
+      assets: { select: { kind: true } },
+    },
     orderBy: { updatedAt: 'desc' },
   })
   const byStage = new Map<string, typeof items>()
@@ -46,10 +72,25 @@ export default async function ProductionPage() {
                 {list.map((item) => {
                   const lastEvent = item.events[0]
                   const failed = lastEvent?.status === 'failed'
+                  const progress = stage === 'assets' ? assetProgress(item) : null
                   return (
                     <div key={item.id} className="rounded-md border p-3 space-y-2 bg-white">
                       <p className="text-sm font-medium text-gray-900 leading-snug">{item.title}</p>
                       <p className="text-xs text-gray-400">{formatRelative(item.stageEnteredAt)}</p>
+                      {progress && (
+                        <div>
+                          <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                            <div
+                              className="h-full bg-orange-500 transition-all"
+                              style={{ width: `${Math.round(progress.ratio * 100)}%` }}
+                            />
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">
+                            图 {progress.images}/{progress.shots} · 动态 {progress.motions}/{progress.wantMotions}
+                            {progress.remaining > 0 ? ` · 还差 ${progress.remaining}` : ' · 已齐'}
+                          </p>
+                        </div>
+                      )}
                       {failed && (
                         <p className="text-xs text-red-500 line-clamp-3">{lastEvent.error}</p>
                       )}

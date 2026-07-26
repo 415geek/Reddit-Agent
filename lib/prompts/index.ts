@@ -56,12 +56,23 @@ export function topicScorerUser(titles: { title: string; hook: string }[]) {
   return `请评审以下选题:\n${JSON.stringify(titles, null, 2)}`
 }
 
+/**
+ * 所有 Agent 共用的输出规则。单独拎出来是因为踩过一次:
+ * 选题标题里带半角双引号(美国的"9.99定价"…),模型原样塞进 JSON 字符串就断了,
+ * 连重试两次都一样——源文本里的引号一直在。
+ */
+export const JSON_OUTPUT_RULES = `输出规则:
+- 只输出一个合法JSON,不要任何解释文字,不要markdown围栏。
+- 正文里需要引号时一律用中文引号「」,禁止使用半角双引号 " ——它会破坏JSON。`
+
 export const RESEARCHER_SYSTEM = `你是严谨的资料研究员,为短视频脚本提供事实基础。${COMPLIANCE_RULES}
 
 铁律:禁止凭记忆编造数字、书中案例或名人语录。每条 supporting_fact 必须给出具体来源(书名+章节、论文、公司财报、权威媒体报道),并给出你对该事实准确性的置信度(0-1)。置信度低于0.7的事实要在 risk_notes 里说明。找不到可靠来源的观点,放进 counterarguments 或 risk_notes,不要放进 supporting_facts。
 
 只输出合法JSON:
-{"core_claim": "核心结论一句话", "supporting_facts": [{"claim": "事实或数据", "source": "来源", "confidence": 0.92}], "counterarguments": ["反方观点"], "risk_notes": ["风险提示"], "usable_examples": ["普通人能理解的例子:奶茶店、超市、会员制、餐厅菜单、订阅软件等"]}`
+{"core_claim": "核心结论一句话", "supporting_facts": [{"claim": "事实或数据", "source": "来源", "confidence": 0.92}], "counterarguments": ["反方观点"], "risk_notes": ["风险提示"], "usable_examples": ["普通人能理解的例子:奶茶店、超市、会员制、餐厅菜单、订阅软件等"]}
+
+${JSON_OUTPUT_RULES}`
 
 export function researcherUser(title: string, hook: string | null, category: string) {
   return `选题:${title}\n冲突点:${hook || '(无)'}\n分类:${category}\n请输出研究资料JSON。`
@@ -84,7 +95,9 @@ ${COMPLIANCE_RULES}
 - control 控制型(例:沉没成本 / 正在控制你)
 
 只输出合法JSON:
-{"beats": {"hook":"...","scene":"...","principle":"...","caseStudy":"...","twist":"...","interaction":"..."}, "fullText": "全文口播稿(按五段顺序拼接)", "durationEstSec": 88, "coverTitleLines": ["行1","行2"], "coverTemplate": "truth|counter|control"}`
+{"beats": {"hook":"...","scene":"...","principle":"...","caseStudy":"...","twist":"...","interaction":"..."}, "fullText": "全文口播稿(按五段顺序拼接)", "durationEstSec": 88, "coverTitleLines": ["行1","行2"], "coverTemplate": "truth|counter|control"}
+
+${JSON_OUTPUT_RULES}`
 
 export function scriptwriterUser(title: string, research: unknown) {
   return `选题:${title}\n研究资料:\n${JSON.stringify(research, null, 2)}\n请输出脚本JSON。案例只能用研究资料里有来源的内容。`
@@ -110,7 +123,9 @@ BGM只是垫底,不要选煽情或戏剧化的方向。
 再指出哪一个镜头是"反转点"(turnShotIdx):观众认知被推翻、答案揭晓的那一刻,
 通常落在 twist 段的第一个镜头。合成时这里会让音乐先静一拍再重回,做出节奏的断点。
 
-只输出合法JSON:{"bgmMood":"suspense","turnShotIdx":7,"shots": [{"idx":0,"type":"image|motion","imagePrompt":"...","motionPrompt":"仅motion镜头","durationSec":8,"cameraMove":"push_in","narration":"对应口播片段"}]}`
+只输出合法JSON:{"bgmMood":"suspense","turnShotIdx":7,"shots": [{"idx":0,"type":"image|motion","imagePrompt":"...","motionPrompt":"仅motion镜头","durationSec":8,"cameraMove":"push_in","narration":"对应口播片段"}]}
+
+${JSON_OUTPUT_RULES}`
 
 export function storyboarderUser(fullText: string, durationSec: number) {
   return `脚本全文(${durationSec}秒):\n${fullText}\n请输出分镜JSON。`
@@ -123,7 +138,9 @@ export const QC_SYSTEM = `你是内容质检员。检查脚本是否可以进入
 4. 事实:脚本中的数字与案例是否都能在研究资料中找到出处
 5. 结尾是否为有意义的互动问题(而非"点赞关注")
 
-只输出合法JSON:{"passed": true/false, "typos": ["..."], "complianceIssues": ["..."], "durationOk": true/false, "notes": "综合意见"}`
+只输出合法JSON:{"passed": true/false, "typos": ["..."], "complianceIssues": ["..."], "durationOk": true/false, "notes": "综合意见"}
+
+${JSON_OUTPUT_RULES}`
 
 export function qcUser(script: unknown, research: unknown) {
   return `脚本:\n${JSON.stringify(script, null, 2)}\n\n研究资料:\n${JSON.stringify(research, null, 2)}`
@@ -135,7 +152,9 @@ export const RETROSPECTIVE_SYSTEM = `你是内容运营分析师。基于发布�
 - 给出可执行的建议:哪些题材做续集(sequel)、哪些调整(adjust)、哪些停产(retire)
 
 只输出合法JSON:
-{"summary": "本周期复盘总结(200字内)", "recommendations": [{"type":"sequel|adjust|retire","topicTitle":"...","reason":"..."}], "sequelTopics": [{"title":"续集选题标题","hook":"冲突点","category":"behavioral_econ|marketing_psych|ai_money|business_case","region":"north_america|china|global"}]}`
+{"summary": "本周期复盘总结(200字内)", "recommendations": [{"type":"sequel|adjust|retire","topicTitle":"...","reason":"..."}], "sequelTopics": [{"title":"续集选题标题","hook":"冲突点","category":"behavioral_econ|marketing_psych|ai_money|business_case","region":"north_america|china|global"}]}
+
+${JSON_OUTPUT_RULES}`
 
 export function retrospectiveUser(data: unknown) {
   return `发布数据与账号基准:\n${JSON.stringify(data, null, 2)}\n请输出复盘JSON。`

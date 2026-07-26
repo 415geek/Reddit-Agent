@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { getMockFixture } from './mock/fixtures'
+import { parseLoose } from './json-repair'
 
 const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5'
 
@@ -51,15 +52,22 @@ export async function generateJSON<T>(opts: {
     return getMockFixture(opts.mockKey, opts.mockParams) as T
   }
   const maxTokens = opts.maxTokens ?? 4096
-  let text = await callOnce(opts.system, opts.user, maxTokens)
-  try {
-    return JSON.parse(stripFences(text)) as T
-  } catch {
-    text = await callOnce(
-      opts.system,
-      `${opts.user}\n\n你上一次的输出不是合法JSON,报错内容已省略。请重新输出,只输出一个合法JSON,不要任何解释文字、不要markdown围栏。上次输出:\n${text.slice(0, 2000)}`,
-      maxTokens
-    )
-    return JSON.parse(stripFences(text)) as T
-  }
+  const text = await callOnce(opts.system, opts.user, maxTokens)
+
+  const first = parseLoose<T>(stripFences(text))
+  if ('value' in first) return first.value
+
+  // 把真实报错喂回去。之前这里写的是"报错内容已省略",模型不知道哪儿错了,
+  // 重试基本是原样再来一遍——实测同一条内容连挂两次。
+  const retry = await callOnce(
+    opts.system,
+    `${opts.user}\n\n你上一次的输出不是合法JSON,解析报错:${first.error}\n` +
+      `最常见的原因是字符串值里出现了没转义的半角双引号(比如标题里的"9.99定价")。` +
+      `中文引号请一律用「」,不要用半角 " 。\n` +
+      `请重新输出,只输出一个合法JSON,不要任何解释文字、不要markdown围栏。上次输出:\n${text.slice(0, 2000)}`,
+    maxTokens,
+  )
+  const second = parseLoose<T>(stripFences(retry))
+  if ('value' in second) return second.value
+  throw new Error(`AI 输出两次都不是合法JSON:${second.error}`)
 }
