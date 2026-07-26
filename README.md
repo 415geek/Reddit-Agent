@@ -80,16 +80,33 @@ bash scripts/deploy-vps.sh
 成片直传存储(Supabase 或本地卷),不经过应用——serverless 的请求体上限只有几 MB,
 一条成片轻松几十 MB。所以 worker 要和应用配同一套存储环境变量。
 
-跑起来:
+跑起来。**应用在 Vercel、只把合成放自己服务器**(目前的实际形态)用这个:
 
 ```bash
-# 同机 docker compose(worker 服务已在 docker-compose.yml 里)
-docker compose up -d bizbrain-worker
+export FACTORY_APP_URL=https://your-app.vercel.app
+export N8N_WEBHOOK_SECRET=...          # 和应用那边同一个
+export SUPABASE_URL=https://xxx.supabase.co
+export SUPABASE_KEY=...                # 和应用同一个桶,否则应用读不到成片
+bash scripts/deploy-worker.sh
+```
 
-# 或者应用在 Vercel、worker 在自己机器上
-FACTORY_APP_URL=https://your-app.vercel.app N8N_WEBHOOK_SECRET=... \
-SUPABASE_URL=... SUPABASE_KEY=... \
-node worker/compose-worker.mjs          # ONCE=1 只跑一轮
+脚本会先验票再干活:检查应用可达、密钥对得上、Supabase 真能写进去(会传一个探针
+文件再删掉),都过了才拉代码、建镜像、起容器,最后确认容器里有中文字体——
+字体缺了字幕会烧成一排方框,那种问题等第一条成片出来才发现太晚。
+
+只需要 Docker,node 和 ffmpeg 都在镜像里。更新就是改完 export 再跑一遍同一条命令。
+
+整套自托管(应用 + Postgres + worker 都在自己机器上)则用根目录那份编排:
+
+```bash
+docker compose up -d bizbrain-worker
+```
+
+不想用 Docker 也行,worker 没有任何 npm 依赖,装好 node 20+ 和 ffmpeg + 中文字体后:
+
+```bash
+FACTORY_APP_URL=... N8N_WEBHOOK_SECRET=... SUPABASE_URL=... SUPABASE_KEY=... \
+node worker/compose-worker.mjs          # ONCE=1 只跑一轮,适合先试一条
 ```
 
 合成做的事:静态图按分镜的 cameraMove 做推近/拉远/横移(否则整条片子是幻灯片)、

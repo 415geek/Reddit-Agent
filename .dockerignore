@@ -1,0 +1,22 @@
+# 密钥绝对不能进镜像层:.env 是运行时用 env_file 挂进去的,
+# 一旦被 COPY 进镜像,任何人 docker save / docker history 都能扒出来。
+.env
+.env.*
+!.env.example
+worker/.env
+
+.git
+.gitignore
+node_modules
+.next
+out
+data
+*.log
+.vercel
+.claude
+
+# 部署产物用不上
+n8n
+docs
+*.md
+!README.md
