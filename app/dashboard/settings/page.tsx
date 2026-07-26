@@ -25,8 +25,8 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">设置</h1>
-        <p className="text-sm text-gray-500 mt-1">运行配置一览(通过 .env 修改,重启生效)</p>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">设置</h1>
+        <p className="text-[13px] sm:text-sm text-gray-500 mt-1">运行配置一览(通过 .env 修改,重启生效)</p>
       </div>
 
       <Card>

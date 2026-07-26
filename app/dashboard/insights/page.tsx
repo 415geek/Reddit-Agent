@@ -22,8 +22,8 @@ export default async function InsightsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">复盘</h1>
-        <p className="text-sm text-gray-500 mt-1">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">复盘</h1>
+        <p className="text-[13px] sm:text-sm text-gray-500 mt-1">
           每周AI复盘:只和账号自身基准比较,不看外部“爆款标准值”。续集选题自动进入选题池。
         </p>
       </div>

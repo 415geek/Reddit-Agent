@@ -31,9 +31,27 @@ export function CoverCanvas({
     <>
       <style>{`html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }`}</style>
       {fit && (
-        <style>{`
-          #cover { transform: scale(calc(100vw / 1080)); transform-origin: top left; }
-        `}</style>
+        <>
+          <style>{`#cover { transform: scale(var(--cover-scale, 1)); transform-origin: top left; }`}</style>
+          {/*
+            缩放比只能用脚本算。CSS 里 scale() 要的是无单位数值,而 calc(100vw / 1080)
+            算出来是长度——整条声明直接被浏览器丢掉,封面按原尺寸 1080×1920 渲染,
+            在预览框里只能看见左上角一块。
+          */}
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `(function(){
+                function fit(){
+                  var s = document.documentElement.clientWidth / 1080;
+                  document.documentElement.style.setProperty('--cover-scale', String(s));
+                  document.body.style.height = (1920 * s) + 'px';
+                }
+                fit();
+                addEventListener('resize', fit);
+              })();`,
+            }}
+          />
+        </>
       )}
         <div
           id="cover"

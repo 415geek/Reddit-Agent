@@ -43,7 +43,14 @@ export function AssetPreview({ shots, assets, bgmMood }: { shots: Shot[]; assets
         <p className="text-xs font-semibold text-gray-500 mb-2">成片</p>
         {!finalVideo && <p className="text-sm text-gray-400">尚未合成</p>}
         {finalVideo && isPlayableVideo(finalVideo.path) && (
-          <video src={url(finalVideo.path)} controls className="w-full rounded-lg border bg-black" style={{ maxHeight: 420 }} />
+          <video
+            src={url(finalVideo.path)}
+            controls
+            playsInline
+            preload="metadata"
+            className="w-full rounded-lg border bg-black mx-auto max-w-[280px] lg:max-w-none"
+            style={{ aspectRatio: '9/16' }}
+          />
         )}
         {finalVideo && !isPlayableVideo(finalVideo.path) && (
           <div className="rounded-md border border-dashed border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
@@ -94,7 +101,7 @@ export function AssetPreview({ shots, assets, bgmMood }: { shots: Shot[]; assets
         <p className="text-xs font-semibold text-gray-500 mb-2">
           分镜画面({byShot.size}/{shots.length})
         </p>
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
           {shots.map((shot) => {
             const a = byShot.get(shot.idx)
             const src = a?.image ? url(a.image.path) : null
@@ -142,7 +149,15 @@ export function AssetPreview({ shots, assets, bgmMood }: { shots: Shot[]; assets
             </div>
             <p className="text-sm text-gray-800">{shot.narration}</p>
             {a?.motion && isPlayableVideo(a.motion.path) && (
-              <video src={url(a.motion.path)} controls loop className="rounded-md border bg-black" style={{ maxHeight: 360 }} />
+              <video
+                src={url(a.motion.path)}
+                controls
+                loop
+                playsInline
+                preload="metadata"
+                className="w-full rounded-md border bg-black max-w-[220px]"
+                style={{ aspectRatio: '9/16' }}
+              />
             )}
             <details className="text-xs text-gray-500">
               <summary className="cursor-pointer">画面提示词</summary>

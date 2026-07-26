@@ -1,7 +1,12 @@
 import { cn } from '@/lib/utils'
 
 export function Table({ className, ...props }: React.HTMLAttributes<HTMLTableElement>) {
-  return <div className="w-full overflow-auto"><table className={cn('w-full caption-bottom text-sm', className)} {...props} /></div>
+  // 表格只在桌面用(手机端各页面都换成了卡片列表),但仍留横向滚动兜底
+  return (
+    <div className="w-full overflow-x-auto scroll-touch">
+      <table className={cn('w-full caption-bottom text-sm', className)} {...props} />
+    </div>
+  )
 }
 export function TableHeader({ className, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) {
   return <thead className={cn('border-b bg-gray-50', className)} {...props} />

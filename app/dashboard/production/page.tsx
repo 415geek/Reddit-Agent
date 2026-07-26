@@ -24,13 +24,14 @@ export default async function ProductionPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">生产中</h1>
-        <p className="text-sm text-gray-500 mt-1">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">生产中</h1>
+        <p className="text-[13px] sm:text-sm text-gray-500 mt-1">
           流水线:研究 → 脚本 → 分镜 → 图片 → 配音 → 合成 → 质检 → 审批。可手动逐段推进,也可由 n8n 自动推进。
         </p>
       </div>
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
+      {/* 手机单列:auto-fill 的 240px 最小宽在 393px 屏上只能排一列,还白白留一截空 */}
+      <div className="grid gap-3 sm:gap-4 sm:[grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]">
         {PIPELINE_STAGES.map((stage) => {
           const list = byStage.get(stage) ?? []
           return (

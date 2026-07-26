@@ -23,11 +23,16 @@ export function ApprovalActions({ id }: { id: string }) {
   }
 
   return (
-    <div className="flex gap-2 flex-shrink-0">
-      <Button disabled={busy} onClick={() => decide('approved')} className="bg-green-600 hover:bg-green-700">
+    // 批准/拒绝是这一页唯一的操作,手机上让它们各占半行、够大够好点
+    <div className="flex gap-2 flex-shrink-0 w-full sm:w-auto">
+      <Button
+        disabled={busy}
+        onClick={() => decide('approved')}
+        className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700 active:bg-green-800"
+      >
         ✓ 批准
       </Button>
-      <Button variant="destructive" disabled={busy} onClick={() => decide('rejected')}>
+      <Button variant="destructive" disabled={busy} onClick={() => decide('rejected')} className="flex-1 sm:flex-none">
         ✗ 拒绝
       </Button>
     </div>

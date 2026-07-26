@@ -50,3 +50,45 @@
   * { @apply border-border; }
   body { @apply bg-background text-foreground; }
 }
+
+@layer base {
+  html {
+    /* iOS 横竖屏切换时不要自动放大字号 */
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    /* 手机上内容区自己滚动,body 不跟着橡皮筋 */
+    overscroll-behavior-y: none;
+  }
+  /* 触控设备上去掉点击时的灰色高亮块 */
+  a,
+  button {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@layer utilities {
+  /* iPhone 的刘海/灵动岛与底部手势条。没有安全区的设备上 env() 返回 0,不影响桌面 */
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  /* 底部标签栏占位:自身高度 + 手势条 */
+  .pb-tabbar {
+    padding-bottom: calc(4.25rem + env(safe-area-inset-bottom));
+  }
+  /* 横向滚动条在 iOS 上惯性滚动更跟手 */
+  .scroll-touch {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  /* 卡片横滑时对齐,别停在半张卡上 */
+  .snap-x-cards {
+    scroll-snap-type: x mandatory;
+  }
+  .snap-card {
+    scroll-snap-align: start;
+  }
+}

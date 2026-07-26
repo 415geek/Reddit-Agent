@@ -28,8 +28,8 @@ export default async function PublishedPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">已发布 · 数据</h1>
-        <p className="text-sm text-gray-500 mt-1">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">已发布 · 数据</h1>
+        <p className="text-[13px] sm:text-sm text-gray-500 mt-1">
           Phase 1 人工发布:批准后到抖音发布(勾选AI内容声明),回来登记链接;24h/72h/168h 录入数据。
         </p>
       </div>
@@ -39,7 +39,7 @@ export default async function PublishedPage() {
           <CardHeader>
             <CardTitle className="text-base">账号基准(全部快照均值,样本 {baseline.sampleSize})</CardTitle>
           </CardHeader>
-          <CardContent className="grid grid-cols-3 lg:grid-cols-7 gap-4 text-sm">
+          <CardContent className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 sm:gap-4 text-sm">
             <div><p className="text-gray-400 text-xs">播放</p><p className="font-semibold">{baseline.avgPlays}</p></div>
             <div><p className="text-gray-400 text-xs">完播率</p><p className="font-semibold">{pct(baseline.avgCompletionRate)}</p></div>
             <div><p className="text-gray-400 text-xs">点赞率</p><p className="font-semibold">{pct(baseline.avgLikeRate)}</p></div>
@@ -58,8 +58,8 @@ export default async function PublishedPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             {approvedItems.map((item) => (
-              <div key={item.id} className="flex flex-wrap items-center gap-3 justify-between border rounded-md p-3">
-                <div>
+              <div key={item.id} className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 sm:justify-between border rounded-lg p-3">
+                <div className="min-w-0">
                   <p className="font-medium text-gray-900">{item.title}</p>
                   <p className="text-xs text-gray-400">{CATEGORY_LABELS[item.topic.category]} · 发布时片尾/简介注明「{item.publishNote}」</p>
                 </div>
@@ -88,8 +88,8 @@ export default async function PublishedPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               {pub.metrics.length > 0 && (
-                <div className="overflow-x-auto">
-                  <table className="text-sm w-full">
+                <div className="-mx-4 px-4 sm:mx-0 sm:px-0 overflow-x-auto scroll-touch">
+                  <table className="text-sm w-full min-w-[520px]">
                     <thead>
                       <tr className="text-xs text-gray-400 text-left">
                         <th className="py-1 pr-4">时点</th><th className="pr-4">播放</th><th className="pr-4">完播率</th>

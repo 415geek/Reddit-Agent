@@ -14,20 +14,21 @@ export function TopicFilters({ current }: { current: { category?: string; region
   }
 
   return (
-    <div className="flex gap-3 flex-wrap">
-      <Select value={current.category ?? ''} onChange={(e) => update('category', e.target.value)} className="w-44">
+    // 手机上三个下拉均分一行,固定宽度会溢出
+    <div className="grid grid-cols-3 sm:flex gap-2 sm:gap-3 sm:flex-wrap">
+      <Select value={current.category ?? ''} onChange={(e) => update('category', e.target.value)} className="w-full sm:w-44">
         <option value="">全部分类</option>
         {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
           <option key={k} value={k}>{v}</option>
         ))}
       </Select>
-      <Select value={current.region ?? ''} onChange={(e) => update('region', e.target.value)} className="w-36">
+      <Select value={current.region ?? ''} onChange={(e) => update('region', e.target.value)} className="w-full sm:w-36">
         <option value="">全部地区</option>
         {Object.entries(REGION_LABELS).map(([k, v]) => (
           <option key={k} value={k}>{v}</option>
         ))}
       </Select>
-      <Select value={current.status ?? ''} onChange={(e) => update('status', e.target.value)} className="w-36">
+      <Select value={current.status ?? ''} onChange={(e) => update('status', e.target.value)} className="w-full sm:w-36">
         <option value="">全部状态</option>
         {Object.entries(TOPIC_STATUS_LABELS).map(([k, v]) => (
           <option key={k} value={k}>{v}</option>

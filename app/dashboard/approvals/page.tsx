@@ -32,8 +32,8 @@ export default async function ApprovalsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">审批队列</h1>
-        <p className="text-sm text-gray-500 mt-1">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">审批队列</h1>
+        <p className="text-[13px] sm:text-sm text-gray-500 mt-1">
           {items.length} 条待审批。批准后请在抖音发布(勾选AI生成内容声明),再到「已发布」页登记链接。
         </p>
       </div>
@@ -52,9 +52,9 @@ export default async function ApprovalsPage() {
         return (
           <Card key={item.id}>
             <CardHeader>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <CardTitle className="text-lg">{item.title}</CardTitle>
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4">
+                <div className="min-w-0">
+                  <CardTitle className="text-base sm:text-lg">{item.title}</CardTitle>
                   <div className="flex gap-2 mt-2 flex-wrap">
                     {item.topic.series && <Badge variant="outline">{item.topic.series.name}</Badge>}
                     <Badge variant="default">{COVER_TEMPLATE_LABELS[item.coverTemplate]}封面</Badge>
@@ -66,8 +66,9 @@ export default async function ApprovalsPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="grid lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2 space-y-4">
+              {/* 手机单栏:先看成片和画面,再看文案——审批时眼睛先找的是画面 */}
+              <div className="grid lg:grid-cols-3 gap-5 lg:gap-6">
+                <div className="lg:col-span-2 space-y-4 order-2 lg:order-1">
                   <div className="space-y-3">
                     {BEAT_LABELS.map(([key, label]) => (
                       <div key={key}>
@@ -106,9 +107,9 @@ export default async function ApprovalsPage() {
                     </details>
                   )}
                 </div>
-                <div className="space-y-4">
+                <div className="space-y-4 order-1 lg:order-2">
                   <p className="text-xs font-semibold text-gray-500 mb-2">封面预览(1080×1920)</p>
-                  <div className="rounded-lg overflow-hidden border bg-black" style={{ aspectRatio: '9/16' }}>
+                  <div className="rounded-lg overflow-hidden border bg-black mx-auto w-full max-w-[240px] lg:max-w-none" style={{ aspectRatio: '9/16' }}>
                     <iframe
                       src={`/covers/${item.id}?scale=fit`}
                       className="w-full h-full"

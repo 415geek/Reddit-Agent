@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { CATEGORY_LABELS, REGION_LABELS, TOPIC_STATUS_LABELS } from '@/lib/domain'
 import { TopicFilters } from './topic-filters'
 import { TopicActions } from './topic-actions'
+import { TopicCard, statusVariant } from './topic-card'
 
 interface SearchParams {
   category?: string
@@ -30,16 +31,25 @@ export default async function TopicsPage({ searchParams }: { searchParams: Searc
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">选题库</h1>
-          <p className="text-sm text-gray-500 mt-1">共 {total} 条(显示前200)· 达到70分可入队生产</p>
-        </div>
+      <div>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">选题库</h1>
+        <p className="text-[13px] sm:text-sm text-gray-500 mt-1">共 {total} 条(显示前200)· 达到70分可入队生产</p>
       </div>
 
       <TopicFilters current={searchParams} />
 
-      <Card>
+      {/* 手机:卡片列表 */}
+      <Card className="lg:hidden">
+        <CardContent className="p-0">
+          {topics.length === 0 && <p className="p-6 text-center text-sm text-gray-400">没有符合条件的选题。</p>}
+          {topics.map((t) => (
+            <TopicCard key={t.id} topic={t} />
+          ))}
+        </CardContent>
+      </Card>
+
+      {/* 桌面:表格 */}
+      <Card className="hidden lg:block">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
@@ -74,19 +84,7 @@ export default async function TopicsPage({ searchParams }: { searchParams: Searc
                     {t.scoreTotal != null ? t.scoreTotal.toFixed(0) : '—'}
                   </TableCell>
                   <TableCell>
-                    <Badge
-                      variant={
-                        t.status === 'rejected' || t.status === 'retired'
-                          ? 'high'
-                          : t.status === 'in_production' || t.status === 'queued'
-                            ? 'medium'
-                            : t.status === 'published'
-                              ? 'low'
-                              : 'none'
-                      }
-                    >
-                      {TOPIC_STATUS_LABELS[t.status] ?? t.status}
-                    </Badge>
+                    <Badge variant={statusVariant(t.status)}>{TOPIC_STATUS_LABELS[t.status] ?? t.status}</Badge>
                   </TableCell>
                   <TableCell>
                     <TopicActions id={t.id} status={t.status} />

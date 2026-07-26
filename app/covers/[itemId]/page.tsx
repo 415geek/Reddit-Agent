@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import type { Viewport } from 'next'
 import { prisma } from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
 import { CoverCanvas } from './cover-canvas'
@@ -9,6 +10,14 @@ import { CoverCanvas } from './cover-canvas'
  * 访问:登录 cookie,或 ?token=<N8N_WEBHOOK_SECRET>(供 Playwright 截图)。
  * ?scale=fit 时按视口缩放(用于看板 iframe 预览)。
  */
+
+/**
+ * 这一页必须自己声明 viewport。它被审批页用 iframe 嵌着,而移动浏览器对
+ * 没有 viewport meta 的 iframe 会套用 980px 的默认布局视口——
+ * scale(100vw/1080) 里的 100vw 就变成 980 而不是 iframe 的真实宽度,
+ * 封面被放大到近乎原尺寸,只能看见左上角一块。
+ */
+export const viewport: Viewport = { width: 'device-width', initialScale: 1 }
 export default async function CoverPage({
   params,
   searchParams,
