@@ -10,3 +10,4 @@ out/
 prisma/migrations/dev*
 data/
 tsconfig.tsbuildinfo
+.vercel
