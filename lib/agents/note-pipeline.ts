@@ -23,6 +23,7 @@ import { getMediaProviders, providerLabels } from '../providers'
 import { renderCardPng } from '../cards/render'
 import { saveAsset } from '../storage'
 import { logEvent } from './events'
+import { fetchArticleText } from '../sources/fetch'
 
 /**
  * 图文的阶段机:research → note → qc → cards → awaiting_approval
@@ -73,8 +74,25 @@ function sourcePayload(item: NoteItem) {
     url: s.url,
     publishedAt: s.publishedAt?.toISOString().slice(0, 10) ?? null,
     summary: s.summary,
+    // 全文优先。RSS 摘要只有两三百字,一个数字翻来覆去用;
+    // 原文里通常有七八个支撑数字和日期,专业感的差距主要在这儿
+    fullText: s.rawText ?? undefined,
     category: s.category,
   }
+}
+
+/**
+ * 确保选题的原始素材抓过全文。research 阶段进来先跑这一步:
+ * 抓到就存回 SourceItem.rawText(后面写稿、返工都复用,不重复抓),
+ * 抓不到(付费墙、纯 JS 站)就退回摘要照常走,不阻塞。
+ */
+async function ensureFullText(item: NoteItem) {
+  const s = item.topic.sourceItem
+  if (!s || s.rawText) return
+  const text = await fetchArticleText(s.url)
+  if (!text) return
+  await prisma.sourceItem.update({ where: { id: s.id }, data: { rawText: text } })
+  s.rawText = text
 }
 
 // ── research ──────────────────────────────────────────────────────────────────
@@ -84,6 +102,7 @@ interface NoteResearchOutput extends ResearchOutput {
 }
 
 async function runResearch(item: NoteItem) {
+  await ensureFullText(item)
   const meta = topicMeta(item)
   const out = await generateJSON<NoteResearchOutput>({
     system: NOTE_RESEARCH_SYSTEM,

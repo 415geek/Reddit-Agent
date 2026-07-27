@@ -42,16 +42,28 @@ export function stripHtml(input: string | null | undefined, maxLen = 1200): stri
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
     .replace(/\s+/g, ' ')
     .trim()
-  if (!text) return null
-  return text.length > maxLen ? text.slice(0, maxLen) + '…' : text
+  const decoded = decodeEntities(text)
+  if (!decoded) return null
+  return decoded.length > maxLen ? decoded.slice(0, maxLen) + '…' : decoded
+}
+
+/**
+ * 解码常见 HTML 实体。行业媒体正文里 &rsquo; &mdash; &#8217; 满天飞,
+ * 不解码就原样进稿子,模型还会有样学样往输出里写。
+ */
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+  rsquo: '\u2019', lsquo: '\u2018', rdquo: '\u201d', ldquo: '\u201c',
+  mdash: '\u2014', ndash: '\u2013', hellip: '\u2026', middot: '\u00b7', deg: '\u00b0',
+}
+
+export function decodeEntities(s: string): string {
+  return s
+    .replace(/&#(\d+);/g, (_m, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_m, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&([a-z]+);/gi, (m, name) => NAMED_ENTITIES[name.toLowerCase()] ?? m)
 }
 
 function parseDate(v: unknown): Date | null {
@@ -169,6 +181,46 @@ function parseFederalRegister(json: string): RawItem[] {
       summary: stripHtml(r.abstract),
       publishedAt: parseDate(r.publication_date),
     }))
+}
+
+/**
+ * 抓一篇文章的正文全文。
+ *
+ * RSS 摘要只有两三百字,数字和细节全在原文里。只靠摘要写稿,
+ * 模型手里只有「42% 不赚钱」一个数,写六张卡就只能反复咀嚼这一个数——
+ * 看起来专业不专业,差距主要在这儿:真正的行业文章里通常还有七八个
+ * 支撑数字、来源机构、生效日期,全文抓下来这些才进得了稿子。
+ *
+ * 提取用的是够用的土办法:优先 <article>,砍掉 script/style/nav/footer/aside。
+ * 不引 readability 库——白名单里都是正经媒体和政府站,结构规矩,
+ * 土办法在它们身上够用;失败就返回 null,写稿退回用摘要,不算灾难。
+ */
+export async function fetchArticleText(url: string, maxLen = 8000): Promise<string | null> {
+  let html: string
+  try {
+    html = await get(url, 'text/html,application/xhtml+xml')
+  } catch {
+    return null
+  }
+  let scope = html
+  const article = html.match(/<article[\s>][\s\S]*?<\/article>/i)
+  if (article) scope = article[0]
+  else {
+    const main = html.match(/<main[\s>][\s\S]*?<\/main>/i)
+    if (main) scope = main[0]
+  }
+  const text = scope
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<(nav|footer|aside|header|form|figure)[\s>][\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const text2 = decodeEntities(text)
+  // 太短说明没抓到正文(付费墙、纯 JS 渲染),宁可返回 null 也别把导航碎渣当正文
+  if (text2.length < 400) return null
+  return text2.length > maxLen ? text2.slice(0, maxLen) + '…' : text2
 }
 
 /** 拉一个源。失败就抛,调用方负责记 lastError,不让一个源挂掉整轮采集 */

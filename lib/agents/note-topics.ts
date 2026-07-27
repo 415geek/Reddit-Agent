@@ -58,7 +58,7 @@ export async function pickNoteTopics(count = 5) {
       select: { title: true },
     })
 
-    const picks = await generateJSON<PickedTopic[]>({
+    const raw = await generateJSON<PickedTopic[] | Record<string, unknown>>({
       system: NOTE_TOPIC_SYSTEM,
       user: noteTopicUser(
         ranked.map((r) => ({
@@ -74,6 +74,24 @@ export async function pickNoteTopics(count = 5) {
       maxTokens: 8192,
       mockKey: 'note.topics',
     })
+    // 提示词要求输出数组,但模型偶尔会包一层对象({"topics": [...]})
+    // 或者只挑出一条时直接给单个对象。三种形状都接住,别让一次任性把整轮选题炸掉
+    const picks: PickedTopic[] = Array.isArray(raw)
+      ? raw
+      : Array.isArray((raw as Record<string, unknown>)?.topics)
+        ? ((raw as Record<string, unknown>).topics as PickedTopic[])
+        : raw && typeof raw === 'object' && 'sourceIndex' in raw
+          ? [raw as unknown as PickedTopic]
+          : []
+    // 空结果时把原始形状记下来。空可能是"模型真觉得没得挑"(合法),
+    // 也可能是它换了个没见过的包装被上面判成了空——不留痕迹就分不清这两种
+    if (!picks.length) {
+      await logEvent({
+        stage: 'note_topics',
+        status: 'succeeded',
+        detail: { emptyPicks: true, rawShape: Array.isArray(raw) ? 'empty_array' : Object.keys(raw ?? {}).slice(0, 8) },
+      })
+    }
 
     let saved = 0
     const skipped: string[] = []
