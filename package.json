@@ -15,7 +15,9 @@
     "db:studio": "prisma studio",
     "demo": "tsx scripts/demo-pipeline.ts",
     "feeds:check": "tsx scripts/check-feeds.ts",
-    "sources:collect": "tsx scripts/collect-once.ts"
+    "sources:collect": "tsx scripts/collect-once.ts",
+    "fonts:build": "python3 scripts/build-fonts.py",
+    "cards:preview": "tsx --tsconfig tsconfig.scripts.json scripts/preview-card.tsx"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
