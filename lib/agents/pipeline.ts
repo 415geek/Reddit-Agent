@@ -140,6 +140,13 @@ async function runStoryboard(item: ItemWithRelations) {
 const ASSET_BUDGET_MS = Number(process.env.ASSET_BUDGET_MS || 40_000)
 
 /**
+ * 最多做几段图生视频。分镜模型一般给 3 段,但这是整条流水线最贵的一项——
+ * 一段 720p 5秒约 $0.32,而静态图只要 $0.03,而且合成时本来就有推近/横移的运镜。
+ * 想更省就调小,设 0 就是完全不用图生视频(成本掉到约七分之一)。
+ */
+const MAX_MOTION_SHOTS = Number(process.env.MAX_MOTION_SHOTS ?? 3)
+
+/**
  * 图生视频的否定约束。实测 Seedance 会自作主张给画面配上中文大标题和角标,
  * 而且多半是乱码,还会和我们烧上去的字幕叠在一起。分镜提示词里写一句不够,
  * 在调用前统一补一遍。
@@ -183,7 +190,12 @@ async function runAssets(item: ItemWithRelations, budgetMs?: number) {
     made++
   }
 
-  // 分镜图(全部镜头都要底图;motion 镜头再图生视频)
+  // 只给前 MAX_MOTION_SHOTS 个 motion 镜头真的做图生视频,其余退回静态图+运镜
+  const motionAllowed = new Set(
+    shots.filter((s) => s.type === 'motion' && s.motionPrompt).slice(0, MAX_MOTION_SHOTS).map((s) => s.idx),
+  )
+
+  // 分镜图(全部镜头都要底图;选中的 motion 镜头再图生视频)
   for (const shot of shots) {
     if (outOfTime()) break
 
@@ -196,7 +208,7 @@ async function runAssets(item: ItemWithRelations, budgetMs?: number) {
       made++
     }
 
-    if (shot.type === 'motion' && shot.motionPrompt && !motionDone.has(shot.idx)) {
+    if (shot.type === 'motion' && shot.motionPrompt && motionAllowed.has(shot.idx) && !motionDone.has(shot.idx)) {
       // 和封面同样的教训:图生视频模型很爱自己往画面里加中文标题和角标,
       // 生成的还多半是乱码,又会和我们烧上去的字幕打架,所以在这里硬加否定约束。
       const motionPrompt = cleanMotionPrompt(shot.motionPrompt)
@@ -246,7 +258,7 @@ async function runAssets(item: ItemWithRelations, budgetMs?: number) {
   })
   const doneImages = after.filter((a) => a.kind === 'shot_image').length
   const doneMotions = after.filter((a) => a.kind === 'motion_clip').length
-  const wantMotions = shots.filter((s) => s.type === 'motion' && s.motionPrompt).length
+  const wantMotions = motionAllowed.size
   const remaining = shots.length - doneImages + (wantMotions - doneMotions)
 
   if (remaining > 0) {

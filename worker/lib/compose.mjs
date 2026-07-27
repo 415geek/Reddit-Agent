@@ -65,24 +65,49 @@ function kenBurns(cameraMove, durationSec) {
   return `${base},zoompan=z='${z}':d=${frames}:x='${x}':y='${y}':s=${W}x${H}:fps=${FPS},setsar=1,format=yuv420p`
 }
 
-/** 动态镜头:seedance 出的片子本身就是竖屏,统一到画布尺寸并对齐目标时长 */
-function motionFilter(clipDuration, targetDuration) {
-  const fit = `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1,format=yuv420p`
-  // 片子比这个镜头短就冻住最后一帧补齐,长就直接切掉多余部分
-  if (clipDuration > 0 && clipDuration < targetDuration - 0.05) {
-    return `${fit},tpad=stop_mode=clone:stop_duration=${(targetDuration - clipDuration).toFixed(3)}`
-  }
-  return fit
+const FIT = `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1,format=yuv420p`
+
+/**
+ * 把短片段做成"来回播"的回文片段:正着一遍再倒着一遍。
+ *
+ * 为什么要这个:图生视频按秒计费,5 秒比 9 秒便宜一半,所以片段常常比镜头短。
+ * 补齐的老办法是冻住最后一帧,那一停很难看;直接首尾相接循环则会在接缝处跳一下。
+ * 回文没有接缝——慢推进倒过来就是慢拉远,本来就是顺的。
+ */
+async function makePingPong(src, outFile) {
+  await ffmpeg([
+    '-i', src,
+    '-filter_complex', `[0:v]${FIT},split[a][b];[b]reverse[r];[a][r]concat=n=2:v=1:a=0[v]`,
+    '-map', '[v]', '-an',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p',
+    '-r', String(FPS),
+    outFile,
+  ])
+  return outFile
 }
 
-async function renderSegment(shot, outFile) {
+async function renderSegment(shot, outFile, workDir) {
   const dur = shot.scaledDuration.toFixed(3)
   if (shot.type === 'motion' && shot.motionFile) {
     const clipDur = await probeDuration(shot.motionFile)
+    // 片段比镜头短:先做成回文再无缝循环补满。长就直接切。
+    if (clipDur > 0 && clipDur < shot.scaledDuration - 0.05) {
+      const pp = await makePingPong(shot.motionFile, path.join(workDir, `pp_${shot.idx}.mp4`))
+      await ffmpeg([
+        '-stream_loop', '-1', '-i', pp,
+        '-t', dur,
+        '-vf', `fps=${FPS},setsar=1,format=yuv420p`,
+        '-an',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p',
+        '-r', String(FPS),
+        outFile,
+      ])
+      return
+    }
     await ffmpeg([
       '-i', shot.motionFile,
       '-t', dur,
-      '-vf', motionFilter(clipDur, shot.scaledDuration),
+      '-vf', FIT,
       '-an',
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p',
       '-r', String(FPS),
@@ -233,7 +258,7 @@ export async function composeVideo(job, { downloadTo, log = () => {} }) {
     const segments = []
     for (const sh of shots) {
       const out = path.join(segDir, `seg_${String(sh.idx).padStart(3, '0')}.mp4`)
-      await renderSegment(sh, out)
+      await renderSegment(sh, out, segDir)
       segments.push(out)
       log(`镜头 ${sh.idx} (${sh.type}, ${sh.scaledDuration.toFixed(1)}s) 完成`)
     }

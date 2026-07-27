@@ -116,14 +116,27 @@ export const falImage: ImageGenProvider = {
   },
 }
 
+/**
+ * 图生视频的分辨率和时长——这两个参数决定了整条流水线八成的钱。
+ *
+ * Seedance 按 (高×宽×帧率×秒数) 计费,所以:
+ *   1080p 9秒 = $1.31/段,720p 9秒 = $0.58,720p 5秒 = $0.32
+ * 默认给 720p:动态片段最后是被缩放进 1080×1920 的画布再交给抖音二次压缩的,
+ * 1080p 那份细节根本留不到观众眼里,却要多付一倍多的钱。
+ * 想要极致画质就设 FAL_MOTION_RESOLUTION=1080p。
+ */
+const MOTION_RESOLUTION = process.env.FAL_MOTION_RESOLUTION || '720p'
+/** 单段最长几秒。比镜头短没关系,合成时会做乒乓循环补满 */
+const MOTION_MAX_SEC = Number(process.env.MOTION_MAX_SEC || 5)
+
 function motionBody(imageUrl: string, motionPrompt: string, durationSec: number) {
   return {
     prompt: motionPrompt,
     image_url: imageUrl,
     aspect_ratio: '9:16',
-    resolution: '1080p',
+    resolution: MOTION_RESOLUTION,
     // duration 只接受 2-12 秒的整数
-    duration: String(Math.max(2, Math.min(12, Math.round(durationSec)))),
+    duration: String(Math.max(2, Math.min(12, Math.round(Math.min(durationSec, MOTION_MAX_SEC))))),
   }
 }
 
