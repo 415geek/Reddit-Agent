@@ -38,13 +38,43 @@ const MUTED = '#9AA0A6'
 const IMAGE_MIN_H = Math.round(CARD_HEIGHT * 0.42)
 const PAD_X = 60
 
-/** 正文和要点的长度上限。提示词里也会约束,这里是兜底——模型总有不听话的时候 */
-const BODY_MAX = 110
+/**
+ * 正文和要点的长度上限。提示词里已经约束了(封面 90 字、内页 95 字),
+ * 这里是兜底。留出富余量:上限卡得太紧,超一点点就被截成「…」,
+ * 而封面被截掉的恰好是最后那句行动项——整张卡片最有用的一句。
+ */
+const BODY_MAX = 130
 const BULLET_MAX = 22
 const BULLET_COUNT = 4
 
+/**
+ * 半角标点转全角。
+ *
+ * 提示词里已经写了"标点一律用全角",但模型照做只有八九成——
+ * 实测同一条笔记里会混着「涨,你管不了」和「挪,你 4-6 点」,
+ * 中文里夹半角逗号在卡片上会挤成一坨,和前后字距明显不匀。
+ * 这种纯机械的规范化交给代码做,比反复叮嘱模型可靠。
+ *
+ * 判断条件是"中文出现在标点的任意一侧",不是"两侧都是中文"。
+ * 先按两侧都要求写过一版,漏掉了最常见的两种:
+ *   「行为在增加,42% 的员工」 中文在左、数字在右
+ *   「2026-07-22:近四成员工」 数字在左、中文在右
+ * 这两种在带数据的句子里到处都是,而这个号每句都带数据。
+ * 只有两侧都是西文/数字时才保留半角(「Management, 2026-07-23」「4-6 点」「2.5%」)。
+ */
+const CJK = '㐀-鿿豈-﫿'
+const HALF_TO_FULL: Record<string, string> = { ',': '，', ':': '：', ';': '；', '?': '？', '!': '！' }
+
+const PUNCT_RE = new RegExp(`(?:([${CJK}])\\s*([,:;?!])|([,:;?!])\\s*(?=[${CJK}]))`, 'g')
+
+function normalizePunct(s: string) {
+  return s.replace(PUNCT_RE, (_m, before, p1, p2) =>
+    before ? before + (HALF_TO_FULL[p1] ?? p1) : HALF_TO_FULL[p2] ?? p2,
+  )
+}
+
 function clip(s: string, max: number) {
-  const t = (s ?? '').trim()
+  const t = normalizePunct((s ?? '').trim())
   return t.length > max ? t.slice(0, max - 1) + '…' : t
 }
 
@@ -82,7 +112,10 @@ function width(s: string) {
 }
 
 export function CardLayout(input: CardLayoutInput): ReactElement {
-  const size = titleSize(input.titleTop, input.titleBottom)
+  const titleTop = normalizePunct(input.titleTop ?? '')
+  const titleBottom = normalizePunct(input.titleBottom ?? '')
+  const label = normalizePunct(input.label ?? '')
+  const size = titleSize(titleTop, titleBottom)
   const bullets = (input.bullets ?? []).slice(0, BULLET_COUNT).map((b) => clip(b, BULLET_MAX))
   const body = clip(input.body, BODY_MAX)
 
@@ -142,11 +175,11 @@ export function CardLayout(input: CardLayoutInput): ReactElement {
             marginBottom: 22,
           }}
         >
-          {input.label}
+          {label}
         </div>
 
         <div style={{ display: 'flex', fontSize: size, fontWeight: 700, color: INK, lineHeight: 1.16 }}>
-          {input.titleTop}
+          {titleTop}
         </div>
         <div
           style={{
@@ -158,7 +191,7 @@ export function CardLayout(input: CardLayoutInput): ReactElement {
             marginTop: 6,
           }}
         >
-          {input.titleBottom}
+          {titleBottom}
         </div>
 
         {/* 左红竖线 + 正文 */}

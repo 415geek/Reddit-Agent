@@ -1,6 +1,7 @@
 import { prisma } from '../prisma'
-import { STAGES, Stage } from '../domain'
+import { NOTE_STAGES, STAGES, Stage } from '../domain'
 import { advanceItem } from './pipeline'
+import { advanceNoteItem } from './note-pipeline'
 
 /**
  * 流水线心跳:把所有在产内容各推一轮。
@@ -27,7 +28,13 @@ const MAX_AUTO_FAILURES = Number(process.env.MAX_AUTO_FAILURES || 3)
  */
 const FAILURE_COOLDOWN_MS = Number(process.env.FAILURE_COOLDOWN_MS || 30 * 60 * 1000)
 
-const IN_FLIGHT: Stage[] = STAGES.filter((s) => s !== 'awaiting_approval') as Stage[]
+/**
+ * 在产阶段。两条线的阶段序列不同,合起来取并集——
+ * 心跳只负责"把在产的都推一轮",具体推哪个 handler 由 kind 决定。
+ */
+const IN_FLIGHT: string[] = Array.from(
+  new Set([...STAGES, ...NOTE_STAGES].filter((s) => s !== 'awaiting_approval')),
+)
 
 export interface TickResult {
   advanced: Array<{ itemId: string; title: string; from: string; to: string; detail?: unknown }>
@@ -63,7 +70,7 @@ export async function runPipelineTick(opts: { budgetMs?: number } = {}): Promise
   const items = await prisma.contentItem.findMany({
     where: { stage: { in: IN_FLIGHT } },
     orderBy: { stageEnteredAt: 'asc' },
-    select: { id: true, title: true, stage: true },
+    select: { id: true, title: true, stage: true, kind: true },
     take: 50,
   })
   result.remaining = items.length
@@ -75,7 +82,8 @@ export async function runPipelineTick(opts: { budgetMs?: number } = {}): Promise
       break
     }
 
-    // 合成阶段不归这里管:它在等自托管 worker 来领,推它没有意义
+    // 合成阶段不归这里管:它在等自托管 worker 来领,推它没有意义。
+    // 图文没有这个阶段——卡片是 next/og 在函数里直接出的
     if (item.stage === 'compose') {
       result.skipped++
       continue
@@ -89,7 +97,10 @@ export async function runPipelineTick(opts: { budgetMs?: number } = {}): Promise
     }
 
     try {
-      const out = await advanceItem(item.id, { budgetMs: PER_ITEM_BUDGET_MS })
+      const out =
+        item.kind === 'video'
+          ? await advanceItem(item.id, { budgetMs: PER_ITEM_BUDGET_MS })
+          : await advanceNoteItem(item.id, { budgetMs: PER_ITEM_BUDGET_MS })
       result.advanced.push({
         itemId: item.id,
         title: item.title,
