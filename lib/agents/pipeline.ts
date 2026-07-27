@@ -261,7 +261,10 @@ async function runAssets(item: ItemWithRelations, budgetMs?: number) {
   const doneImages = after.filter((a) => a.kind === 'shot_image').length
   const doneMotions = after.filter((a) => a.kind === 'motion_clip').length
   const wantMotions = motionAllowed.size
-  const remaining = shots.length - doneImages + (wantMotions - doneMotions)
+  // 动态镜头的缺口要夹到 0:MAX_MOTION_SHOTS 调小(或关掉)之后,
+  // 库里已经存着的 motion_clip 会让 wantMotions - doneMotions 变成负数,
+  // 把还没生成的静态图缺口抵消掉,这一阶段就会提前放行、少几张图去合成。
+  const remaining = shots.length - doneImages + Math.max(0, wantMotions - doneMotions)
 
   if (remaining > 0) {
     return { madeThisRound: made, images: doneImages, motionClips: doneMotions, remaining, stayInStage: true }

@@ -20,7 +20,10 @@ function assetProgress(item: {
   const shotList = (item.storyboards[0]?.shots ?? []) as Array<{ type?: string }>
   const shots = shotList.length
   if (!shots) return null
-  const wantMotions = shotList.filter((s) => s.type === 'motion').length
+  // 要和流水线的口径一致:真正会去做图生视频的只有前 MAX_MOTION_SHOTS 个 motion 镜头,
+  // 按分镜里标了几个 motion 来数,关掉图生视频之后看板会一直显示"还差",其实早就够了
+  const maxMotion = Number(process.env.MAX_MOTION_SHOTS ?? 0)
+  const wantMotions = Math.min(shotList.filter((s) => s.type === 'motion').length, maxMotion)
   const images = item.assets.filter((a) => a.kind === 'shot_image').length
   const motions = item.assets.filter((a) => a.kind === 'motion_clip').length
   const total = shots + wantMotions
