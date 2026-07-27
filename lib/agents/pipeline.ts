@@ -149,13 +149,15 @@ function cleanMotionPrompt(prompt: string) {
   return `${base},画面中绝对不能出现任何文字、字幕、标题、角标、logo 或水印`
 }
 
-async function runAssets(item: ItemWithRelations) {
+async function runAssets(item: ItemWithRelations, budgetMs?: number) {
   const storyboard = item.storyboards[0]
   if (!storyboard) throw new Error('缺少分镜,无法生成资产')
   const shots = storyboard.shots as unknown as Shot[]
   const providers = getMediaProviders()
   const labels = providerLabels()
-  const deadline = Date.now() + ASSET_BUDGET_MS
+  // 心跳批量推进时会传更小的预算进来:一次心跳要照顾多条内容,
+  // 不能让一条把整轮的时间吃光
+  const deadline = Date.now() + (budgetMs ?? ASSET_BUDGET_MS)
 
   // 已有资产:断点续跑的依据
   const existing = await prisma.asset.findMany({
@@ -370,6 +372,12 @@ const MAX_SCRIPT_REVISIONS = 2
 
 /** 中文口播实测语速。用 MiniMax 默认语速念,约 4.5 字/秒 */
 export const CHARS_PER_SEC = Number(process.env.SCRIPT_CHARS_PER_SEC || 4.5)
+/**
+ * 判不合格的硬上限。目标仍然是 60-100 秒,提示词里也照这个要求写,
+ * 但卡死在 100 秒会出问题:实测模型压到 105 秒左右就下不去了,
+ * 一条内容反复返工到耗尽次数、彻底卡在质检阶段——为 5% 的超长把整条毙掉不划算。
+ */
+const HARD_MAX_SEC = Number(process.env.SCRIPT_HARD_MAX_SEC || 110)
 
 /** 只数正文字数,标点和空白不占时间 */
 export function scriptChars(fullText: string) {
@@ -384,9 +392,9 @@ export function estimateDurationSec(fullText: string) {
 function scriptLengthIssue(fullText: string): string | null {
   const chars = scriptChars(fullText)
   const sec = estimateDurationSec(fullText)
-  if (sec > 100) {
-    const target = Math.round(95 * CHARS_PER_SEC)
-    return `全文${chars}字,按4.5字/秒念出来约${sec}秒,超过100秒上限。请压缩到${target}字以内:删掉重复论证和铺垫,保留钩子、原理、案例、行动这四件事。`
+  if (sec > HARD_MAX_SEC) {
+    const target = Math.round(90 * CHARS_PER_SEC)
+    return `全文${chars}字,按4.5字/秒念出来约${sec}秒,超出上限。请压缩到${target}字以内:删掉重复论证和铺垫,保留钩子、原理、案例、行动这四件事。`
   }
   if (sec < 55) {
     const target = Math.round(70 * CHARS_PER_SEC)
@@ -467,7 +475,7 @@ async function runQc(item: ItemWithRelations) {
   return { passed: false, stayInStage: true, revisedTo: script.version + 1, issues }
 }
 
-const HANDLERS: Record<Stage, (item: ItemWithRelations) => Promise<Record<string, unknown>>> = {
+const HANDLERS: Record<Stage, (item: ItemWithRelations, budgetMs?: number) => Promise<Record<string, unknown>>> = {
   research: runResearch,
   script: runScript,
   storyboard: runStoryboard,
@@ -481,7 +489,7 @@ const HANDLERS: Record<Stage, (item: ItemWithRelations) => Promise<Record<string
 /**
  * 推进一个生产单元到下一阶段。n8n 循环调用本函数,直到返回 stage=awaiting_approval。
  */
-export async function advanceItem(itemId: string) {
+export async function advanceItem(itemId: string, opts: { budgetMs?: number } = {}) {
   const item = await loadItem(itemId)
   if (!item) throw new Error(`ContentItem 不存在: ${itemId}`)
   const stage = item.stage as Stage
@@ -494,7 +502,7 @@ export async function advanceItem(itemId: string) {
 
   await logEvent({ contentItemId: itemId, stage, status: 'started' })
   try {
-    const detail = await HANDLERS[stage](item)
+    const detail = await HANDLERS[stage](item, opts.budgetMs)
 
     // 阶段要求留在原地(如质检返工:已重写脚本,下一次 advance 复检新版本)
     if (detail.stayInStage) {

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# 生意脑回路 — 成片合成 worker 部署(应用在 Vercel,只把合成放自己服务器)
+# 生意脑回路 — 内容工厂 worker 部署(应用在 Vercel,重活放自己服务器)
+#
+# 这个 worker 一个进程干两件事:
+#   ① 流水线心跳:把在产内容自动从研究一路推到待审批,不用在看板上一条条点
+#   ② 成片合成:用 FFmpeg 把图、动态镜头、旁白、BGM、字幕烧成成片
+# 跑起来之后就是:入队选题 → 全自动生产 → 到审批队列等你看。
 #
 # 在服务器上跑:先 export 下面几个变量,再 bash scripts/deploy-worker.sh
-# 脚本会:拉代码 → 写 .env → 起容器 → 连通性自检 → 跑一轮真实合成验证
-#
 # 只需要 Docker,不需要 node、ffmpeg、数据库——都在镜像里。
 set -euo pipefail
 
@@ -31,6 +34,9 @@ SUBTITLE_MAX_CHARS="${SUBTITLE_MAX_CHARS:-14}"
 VIDEO_PRESET="${VIDEO_PRESET:-medium}"
 VIDEO_CRF="${VIDEO_CRF:-20}"
 POLL_INTERVAL_MS="${POLL_INTERVAL_MS:-30000}"
+# 流水线心跳间隔;设 RUN_PIPELINE=false 可只做合成、不自动推进
+RUN_PIPELINE="${RUN_PIPELINE:-true}"
+TICK_INTERVAL_MS="${TICK_INTERVAL_MS:-20000}"
 WORKER_CPUS="${WORKER_CPUS:-2}"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -97,6 +103,8 @@ SUPABASE_KEY=${SUPABASE_KEY}
 SUPABASE_BUCKET=${SUPABASE_BUCKET}
 
 POLL_INTERVAL_MS=${POLL_INTERVAL_MS}
+RUN_PIPELINE=${RUN_PIPELINE}
+TICK_INTERVAL_MS=${TICK_INTERVAL_MS}
 WORKER_CPUS=${WORKER_CPUS}
 
 BGM_GAIN_DB=${BGM_GAIN_DB}
@@ -143,7 +151,7 @@ fi
 
 echo ""
 echo "============================================================"
-echo "  合成 worker 已启动"
+echo "  内容工厂 worker 已启动"
 echo "============================================================"
 echo "应用:      ${FACTORY_APP_URL}"
 echo "存储:      $([ -n "$SUPABASE_URL" ] && echo "Supabase / ${SUPABASE_BUCKET} 桶" || echo "容器本地卷")"
@@ -154,6 +162,13 @@ echo "重启:      docker compose -f ${WORKER_DIR}/worker/docker-compose.yml res
 echo "停止:      docker compose -f ${WORKER_DIR}/worker/docker-compose.yml down"
 echo "更新:      bash ${WORKER_DIR}/scripts/deploy-worker.sh   (同样的 export 再跑一遍)"
 echo ""
-echo "它每 $((POLL_INTERVAL_MS / 1000)) 秒去问一次有没有待合成的内容,有就做,做完自动进审批队列。"
+if [ "$RUN_PIPELINE" = "true" ]; then
+  echo "自动生产已开启:每 $((TICK_INTERVAL_MS / 1000)) 秒推进一次在产内容,合成完自动进审批队列。"
+  echo "你只需要在选题库点「入队」,然后到审批队列看成片。"
+else
+  echo "只做合成(RUN_PIPELINE=false),流水线推进要自己点或交给 n8n。"
+fi
 echo "队列空的时候日志是安静的,这是正常的。"
+echo ""
+echo "想暂停自动生产:docker compose -f ${WORKER_DIR}/worker/docker-compose.yml stop"
 echo ""

@@ -65,6 +65,45 @@ bash scripts/deploy-vps.sh
 之后在 n8n 里导入 `n8n/01~05`,配置环境变量 `FACTORY_APP_URL`、`N8N_WEBHOOK_SECRET`、
 `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`(03 需要 Telegram 凭据)。
 
+## 全自动生产:入队选题 → 到审批队列
+
+看板上的「推进下一阶段」是给调试用的。日常不用点——起一个 worker 就行:
+
+```bash
+export FACTORY_APP_URL=https://your-app.vercel.app
+export N8N_WEBHOOK_SECRET=...
+export SUPABASE_URL=https://xxx.supabase.co
+export SUPABASE_KEY=...
+bash scripts/deploy-worker.sh
+```
+
+这个 worker 一个进程干两件事,常驻在自己的服务器上:
+
+1. **流水线心跳**——每 20 秒敲一次 `/api/pipeline/tick`,把所有在产内容各推一轮:
+   研究 → 脚本 → 质检 → 分镜 → 图片/动态 → 配音 → 合成 → 待审批。
+2. **成片合成**——领 `compose` 阶段的任务,用 FFmpeg 烧成片。
+
+为什么合在一起:合成本来就必须跑在自己的服务器上(serverless 有函数时长上限、没有 FFmpeg),
+既然这个进程无论如何都要常驻,顺手把心跳也担了,就不用再装 n8n 或配 cron。
+
+跑起来之后你的操作只剩两步:**在选题库点「入队」**,过一会**到审批队列看成片**。
+
+心跳接口本身谁都能调,不绑 worker:
+
+```bash
+curl -X POST https://your-app.vercel.app/api/pipeline/tick -H "x-webhook-secret: ..."
+```
+
+`vercel.json` 里配了每小时一次的 Cron 作为兜底——worker 挂了生产不至于完全停,
+但**合成仍然只能由 worker 做**,所以 worker 不跑的话内容会堆在合成阶段。
+
+### 出错了会怎样
+
+- 同一阶段连续失败 3 次就熔断,不再自动重试,留在看板上等人看。
+  没有这个熔断,一条注定失败的内容会每一轮都重试,一直烧 API 额度。
+- 质检不过会带着意见自动返工重写,最多 2 次。
+- 想全局暂停自动生产:停掉 worker 容器,或给应用设 `AUTO_PIPELINE=off`。
+
 ## 成片合成与背景音乐
 
 合成不在应用进程里做:一条 90 秒竖屏成片要拼十几段画面、混两轨音频、烧一遍字幕,
