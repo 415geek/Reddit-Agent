@@ -2,6 +2,14 @@ import BGM_MOODS_CONFIG from '../config/bgm-moods.json'
 
 // 领域类型与常量:阶段机、分类、封面模板、评分维度
 
+/** 产物形态。图文是当前主线,视频那条线代码保留但不再排产 */
+export const ITEM_KINDS = ['note', 'video'] as const
+export type ItemKind = (typeof ITEM_KINDS)[number]
+export const ITEM_KIND_LABELS: Record<ItemKind, string> = {
+  note: '小红书图文',
+  video: '抖音短视频',
+}
+
 // 质检紧跟脚本、在分镜之前:不合规的脚本要在花钱生成图片/配音之前就被拦下并返工
 export const STAGES = [
   'research',
@@ -15,8 +23,33 @@ export const STAGES = [
 ] as const
 export type Stage = (typeof STAGES)[number]
 
+/**
+ * 图文的阶段序列。比视频短一半:没有配音和合成,
+ * 卡片图是 next/og 在函数里直接出 PNG,不需要外部 worker。
+ *
+ * note  = 写整条笔记(封面两行标题 + 内页卡片 + 正文 + 话题标签)
+ * cards = 出配图 + 把每张卡片渲染成 PNG
+ */
+export const NOTE_STAGES = ['research', 'note', 'qc', 'cards', 'awaiting_approval'] as const
+export type NoteStage = (typeof NOTE_STAGES)[number]
+
+export const STAGES_BY_KIND: Record<ItemKind, readonly string[]> = {
+  note: NOTE_STAGES,
+  video: STAGES,
+}
+
+/** 这条内容的下一个阶段是什么。走到头返回 null */
+export function nextStage(kind: string, stage: string): string | null {
+  const seq = STAGES_BY_KIND[(kind as ItemKind) in STAGES_BY_KIND ? (kind as ItemKind) : 'note']
+  const i = seq.indexOf(stage)
+  if (i < 0 || i >= seq.length - 1) return null
+  return seq[i + 1]
+}
+
 export const STAGE_LABELS: Record<string, string> = {
   research: '资料研究',
+  note: '写笔记',
+  cards: '卡片图',
   script: '脚本',
   storyboard: '分镜',
   assets: '图片资产',
@@ -30,10 +63,44 @@ export const STAGE_LABELS: Record<string, string> = {
 }
 
 export const CATEGORY_LABELS: Record<string, string> = {
+  // 图文(餐饮运营)——照着现有小红书号的栏目分的
+  ops: '餐饮运营',
+  pricing: '定价与算账',
+  policy: '政策法规',
+  consumer: '消费者心理',
+  menu: '菜单与转化',
+  delivery: '外卖与线上',
+  labor: '用人与后厨',
+  trend: '行业趋势',
+  // 视频(停用但保留)
   behavioral_econ: '行为经济学',
   marketing_psych: '消费营销心理',
   ai_money: 'AI时代赚钱逻辑',
   business_case: '餐饮小生意案例',
+}
+
+/** 图文选题的品类。视频那四个不在这里,新选题不会再落到它们上面 */
+export const NOTE_CATEGORIES = [
+  'ops',
+  'pricing',
+  'policy',
+  'consumer',
+  'menu',
+  'delivery',
+  'labor',
+  'trend',
+] as const
+export type NoteCategory = (typeof NOTE_CATEGORIES)[number]
+
+/** 素材源的类别。决定采信权重,也决定选题时优先看哪一批 */
+export const SOURCE_CATEGORIES = ['policy', 'regulation', 'trend', 'report', 'media', 'data'] as const
+export const SOURCE_CATEGORY_LABELS: Record<string, string> = {
+  policy: '政策',
+  regulation: '法规',
+  trend: '趋势',
+  report: '研究报告',
+  media: '行业媒体',
+  data: '平台数据',
 }
 
 export const REGION_LABELS: Record<string, string> = {
@@ -173,4 +240,78 @@ export interface TopicScore {
   scores: ScoreDims
   total: number
   riskFlags: string[]
+}
+
+// ── 图文 ──────────────────────────────────────────────────────────────────────
+
+/**
+ * 一张卡片。版式是照着现有小红书号复刻的:
+ * 上半配图,下半白卡——红色栏目标签 / 黑字第一行 / 砖红第二行 / 左红竖线带正文 / 右下页码。
+ *
+ * titleTop 和 titleBottom 必须成对读:第一行抛现象或否定,第二行给反转答案。
+ * 「涨价救利润?」→「这条路到头了」、「最贵的不是厨师」→「是没有标准」。
+ * 拆开单看任何一行都不成立,这是这个号最强的记忆点,不能退化成一句长标题。
+ */
+export interface NoteCard {
+  idx: number
+  /** 栏目标签,如「消费者心理 · 时段」。封面和内页可以不同 */
+  label: string
+  titleTop: string
+  titleBottom: string
+  /** 卡片正文(左侧红竖线右边那段)。封面是摘要,内页是这一页的论述 */
+  body: string
+  /** 内页可选的要点列表,最多 4 条,每条不超过 18 字 */
+  bullets?: string[]
+  /** 配图的生成提示词。风格由 NOTE_IMAGE_STYLE 统一兜底,这里只描述画面内容 */
+  imagePrompt: string
+}
+
+export interface NoteOutput {
+  label: string
+  title_top: string
+  title_bottom: string
+  summary: string
+  cards: Array<{
+    label: string
+    title_top: string
+    title_bottom: string
+    body: string
+    bullets?: string[]
+    image_prompt: string
+  }>
+  note_title: string
+  body_text: string
+  hashtags: string[]
+  sources: Array<{ name: string; url?: string; published_at?: string }>
+}
+
+/**
+ * 配图的统一风格前缀。账号里插画和实拍是交替出现的,但插画占多数、
+ * 而且风格高度一致(暖色、线稿+柔和上色、中餐厅场景、真实的人)。
+ * 风格必须写死在代码里而不是交给模型每次自由发挥,否则同一个号的图会各说各话。
+ *
+ * 末尾那句否定约束是必须的:生图模型很爱自己往画面里加中文标题和角标,
+ * 生成的多半是乱码,又会和我们程序化叠上去的文字打架。
+ */
+export const NOTE_IMAGE_STYLE =
+  '温暖的手绘插画风格,细腻线稿配柔和上色,暖橙与暖褐色调,光线柔和,' +
+  '人物表情自然真实,中式餐厅或后厨的生活化场景,构图饱满有细节,' +
+  '类似高质量绘本或漫画分镜的质感。' +
+  '画面中绝对不能出现任何文字、数字、字母、价格标签、招牌、logo 或水印。'
+
+/** 一条笔记出几张卡:封面 1 张 + 内页 4-5 张,和账号现状一致(页码显示 01/05、01/06) */
+export const NOTE_CARD_MIN = 5
+export const NOTE_CARD_MAX = 6
+
+/** 小红书封面比例 3:4(1080×1440)。竖屏 9:16 在 feed 里会被裁 */
+export const CARD_WIDTH = 1080
+export const CARD_HEIGHT = 1440
+
+export interface NoteQcReport {
+  passed: boolean
+  typos: string[]
+  complianceIssues: string[]
+  /** 来源核对:摘要和正文里引用的数字能不能对上 sources */
+  sourceIssues: string[]
+  notes: string
 }

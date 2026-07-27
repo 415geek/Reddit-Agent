@@ -1,0 +1,147 @@
+{
+  "_comment": [
+    "餐饮内容的权威源白名单。每一条都实测过能拉到条目(见 scripts/check-feeds.mjs)。",
+    "weight 是采信权重 0-100,直接喂给选题评分的 credibility 维度:",
+    "  政府一手文件 95 > 行业协会/官方数据 80 > 垂直行业媒体 65 > 泛美食媒体 50。",
+    "这个号最能打的是政策法规类,所以政府源权重最高,也最优先被挑成选题。",
+    "加新源之前先跑 npm run feeds:check,别把拉不到东西的地址塞进来。",
+    "试过但加不了的:Eater(eater.com/rss/index.xml)。curl 拿得到 200,Node 的 fetch 一律 403,",
+    "换 UA 和 accept 头都没用——是 TLS 指纹层面的机器人拦截。要绕得伪造 TLS 指纹,",
+    "为一个权重 50 的消费端源不值得,别再往回加了。"
+  ],
+  "feeds": [
+    {
+      "slug": "federal-register-whd",
+      "name": "美国联邦公报 · 劳工部工资工时司",
+      "url": "https://www.federalregister.gov/api/v1/documents.json?per_page=40&order=newest&fields[]=title&fields[]=abstract&fields[]=publication_date&fields[]=html_url&fields[]=type&conditions[agencies][]=wage-and-hour-division",
+      "kind": "federal_register",
+      "category": "regulation",
+      "region": "north_america",
+      "weight": 95,
+      "note": "小费、加班、雇员身份认定这些直接决定餐厅工资表怎么开的规则都在这里。按机构筛而不是按关键词搜——关键词搜'restaurant'会把关税和濒危物种都捞进来。"
+    },
+    {
+      "slug": "dol-releases",
+      "name": "美国劳工部 · 新闻发布",
+      "url": "https://www.dol.gov/rss/releases.xml",
+      "kind": "rss",
+      "category": "policy",
+      "region": "north_america",
+      "weight": 92,
+      "note": "执法行动和新规解读比联邦公报快,而且是人话。"
+    },
+    {
+      "slug": "food-safety-news",
+      "name": "Food Safety News",
+      "url": "https://www.foodsafetynews.com/feed/",
+      "kind": "rss",
+      "category": "policy",
+      "region": "north_america",
+      "weight": 80,
+      "note": "召回、食安执法、卫生评级。"
+    },
+    {
+      "slug": "nrn",
+      "name": "Nation's Restaurant News",
+      "url": "https://www.nrn.com/rss.xml",
+      "kind": "rss",
+      "category": "media",
+      "region": "north_america",
+      "weight": 70
+    },
+    {
+      "slug": "restaurant-business",
+      "name": "Restaurant Business",
+      "url": "https://www.restaurantbusinessonline.com/feed",
+      "kind": "rss",
+      "category": "media",
+      "region": "north_america",
+      "weight": 70
+    },
+    {
+      "slug": "restaurant-dive",
+      "name": "Restaurant Dive",
+      "url": "https://www.restaurantdive.com/feeds/news/",
+      "kind": "rss",
+      "category": "trend",
+      "region": "north_america",
+      "weight": 70
+    },
+    {
+      "slug": "modern-restaurant-management",
+      "name": "Modern Restaurant Management",
+      "url": "https://modernrestaurantmanagement.com/feed/",
+      "kind": "rss",
+      "category": "report",
+      "region": "north_america",
+      "weight": 68,
+      "note": "常年转 Toast / Square / OpenTable / Popmenu 的调研数据,是摘要里那种「XX 2026:44% 的…」的主要来源。"
+    },
+    {
+      "slug": "qsr",
+      "name": "QSR Magazine",
+      "url": "https://www.qsrmagazine.com/feed/",
+      "kind": "rss",
+      "category": "media",
+      "region": "north_america",
+      "weight": 65
+    },
+    {
+      "slug": "fsr",
+      "name": "FSR Magazine",
+      "url": "https://www.fsrmagazine.com/feed",
+      "kind": "rss",
+      "category": "media",
+      "region": "north_america",
+      "weight": 65,
+      "note": "正餐(full-service)视角,和 QSR 互补——中餐馆多数是正餐模型。"
+    },
+    {
+      "slug": "food-on-demand",
+      "name": "Food On Demand",
+      "url": "https://www.foodondemand.com/feed/",
+      "kind": "rss",
+      "category": "trend",
+      "region": "north_america",
+      "weight": 65,
+      "note": "外卖平台抽成、自建配送、第三方政策。"
+    },
+    {
+      "slug": "restaurant-technology-news",
+      "name": "Restaurant Technology News",
+      "url": "https://restauranttechnologynews.com/feed/",
+      "kind": "rss",
+      "category": "trend",
+      "region": "north_america",
+      "weight": 62,
+      "note": "POS、支付、刷卡费、点单系统。"
+    },
+    {
+      "slug": "pizza-marketplace",
+      "name": "Pizza Marketplace",
+      "url": "https://www.pizzamarketplace.com/rss/",
+      "kind": "rss",
+      "category": "media",
+      "region": "north_america",
+      "weight": 55
+    },
+    {
+      "slug": "the-caterer",
+      "name": "The Caterer(英国)",
+      "url": "https://www.thecaterer.com/rss/news",
+      "kind": "rss",
+      "category": "media",
+      "region": "global",
+      "weight": 60
+    },
+    {
+      "slug": "just-food",
+      "name": "Just Food(全球)",
+      "url": "https://www.just-food.com/feed/",
+      "kind": "rss",
+      "category": "trend",
+      "region": "global",
+      "weight": 58
+    }
+  ]
+}
