@@ -89,7 +89,8 @@ export default async function ProductionPage() {
                             />
                           </div>
                           <p className="text-xs text-gray-500 mt-1">
-                            图 {progress.images}/{progress.shots} · 动态 {progress.motions}/{progress.wantMotions}
+                            图 {progress.images}/{progress.shots}
+                            {progress.wantMotions > 0 ? ` · 动态 ${progress.motions}/${progress.wantMotions}` : ''}
                             {progress.remaining > 0 ? ` · 还差 ${progress.remaining}` : ' · 已齐'}
                           </p>
                         </div>
