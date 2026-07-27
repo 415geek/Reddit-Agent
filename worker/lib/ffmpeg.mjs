@@ -25,6 +25,22 @@ export function run(bin, args, { quiet = true } = {}) {
 
 export const ffmpeg = (args, opts) => run(FFMPEG, ['-hide_banner', '-nostdin', '-y', ...args], opts)
 
+/**
+ * 跑 ffmpeg 并把 stderr 收回来。
+ * silencedetect 这类分析滤镜的结果是写在 stderr 上的,run() 只给 stdout,拿不到。
+ */
+export function ffmpegStderr(args) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(FFMPEG, ['-hide_banner', '-nostdin', ...args])
+    let err = ''
+    p.stdout.resume()
+    p.stderr.on('data', (d) => (err += d))
+    p.on('error', reject)
+    // 分析用的调用即使非零退出也把已经拿到的内容交出去,由调用方判断
+    p.on('close', () => resolve(err))
+  })
+}
+
 /** 读时长(秒)。读不到返回 0 */
 export async function probeDuration(file) {
   try {

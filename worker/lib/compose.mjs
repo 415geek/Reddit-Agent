@@ -1,15 +1,20 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { ffmpeg, probeDuration } from './ffmpeg.mjs'
+import { ffmpeg, ffmpegStderr, probeDuration } from './ffmpeg.mjs'
 import { buildAss } from './subtitles.mjs'
 
 const W = 1080
 const H = 1920
 const FPS = 30
 
-/** BGM 相对旁白压低多少 dB。-20 大约是"听得见但不抢话" */
-const BGM_GAIN_DB = Number(process.env.BGM_GAIN_DB || -20)
+/**
+ * 讲述段 BGM 比旁白低多少 dB。
+ * 参考视频用 demucs 拆成人声/伴奏两轨分别测,讲述段人声比伴奏高 13.3 dB。
+ * 先设的 -13,拿同样的尺子量自己的成片只做到 +10.9,还差 2.4 dB,所以补到 -15。
+ * (之前的 -20 明显太轻,音乐几乎不存在。)
+ */
+const BGM_GAIN_DB = Number(process.env.BGM_GAIN_DB || -15)
 /** BGM 的高切频率。低于此的交给人声和撞击,音乐不占 */
 const BGM_HIGHPASS_HZ = Number(process.env.BGM_HIGHPASS_HZ || 180)
 /** 成片响度目标。参考视频实测 -12.6 LUFS,比社交平台常见的 -14 更冲一点 */
@@ -127,30 +132,168 @@ async function renderSegment(shot, outFile, workDir) {
 }
 
 /**
- * BGM 的音量包络。除了整体的淡入淡出,反转点前会挖一个坑:
- * 提前 TURN_DIP_SEC 秒滑到近乎无声,撞击落下后再滑回来。
+ * 反转点之后音乐冲多高、保持多久。参考视频实测——把五条伴奏 stem 相加,
+ * 按 0.2 秒一格取**中位数**(不能用整段 RMS,见下面 TURN_DIP_FLOOR 那段的教训):
+ *   铺垫段  伴奏 -30.4 dB
+ *   炸点后  伴奏 -15.2 dB —— 比铺垫段高 15.2 dB,而且不退回去
+ *   高能段持续 5.2 秒,再用约 3.3 秒衰减回原位
+ * 这里默认 +15 dB,保持 5 秒,衰减 3.5 秒。
+ */
+const TURN_BOOST_DB = Number(process.env.TURN_BOOST_DB || 15)
+const TURN_HIGH_SEC = Number(process.env.TURN_HIGH_SEC || 5)
+const TURN_DECAY_SEC = Number(process.env.TURN_DECAY_SEC || 3.5)
+
+/**
+ * 反转点的音量包络:憋 → 砸 → 保持 → 回落。
+ *
+ * 这一条是整段音频设计的骨架。参考视频里:讲到揭晓前音乐先掉下去憋住,
+ * 然后 50 毫秒内跳升 27 dB(低音先进、鼓 50ms 后跟上),
+ * 之后音乐不退回去,一直压着人声响 5 秒,再慢慢衰减。
  *
  * 用 volume 的时间表达式而不是串 afade——afade=t=in 会把 st 之前的全部变成静音,
  * 串在中间等于把前半条曲子抹掉。
  */
-function bgmEnvelope(totalDuration, turnAt) {
-  const fadeOutStart = Math.max(0, totalDuration - 2.5).toFixed(3)
-  const base = `afade=t=in:st=0:d=1.5,afade=t=out:st=${fadeOutStart}:d=2.5`
-  if (!TURN_STING || turnAt == null) return base
+function turnEnvelope(turnAt) {
+  if (!TURN_STING || turnAt == null) return null
 
-  const dipStart = Math.max(0.5, turnAt - TURN_DIP_SEC)
-  const ramp = 0.25 // 滑下去和滑回来各用多久
-  const floor = 0.07 // 坑底保留一点点,全静音会听出"断带"
+  const boost = Math.pow(10, TURN_BOOST_DB / 20)
+  const dipStart = Math.max(0.3, turnAt - TURN_DIP_SEC)
+  const ramp = 0.25 // 滑下去用多久
+  // 坑底降约 6.7 dB,而且落到底之后还在慢慢往下滑,不是平的。
+  //
+  // 这个数我量错过两次,记一下免得再错:
+  // 第一次按"近乎静音"(-23 dB)挖,炸点落差 +61 dB,比参考的 +29 猛一倍。
+  // 第二次纠枉过正改成 -3 dB,依据是 demucs 拆出来的伴奏在憋气段只比铺垫段低 2.9 dB。
+  // 那个 2.9 是假的:憋气段开头 20.4s 有一下 -22.9 dB 的瞬态,整段取 RMS 时被它一个人
+  // 拉高了 5 dB。改成按 0.2 秒一格取中位数,真实值是铺垫 -30.4 / 憋气 -37.1,
+  // 也就是 -6.7 dB;而且最后一秒还从 -34.9 一路滑到 -38.8。
+  // 教训:量一段有瞬态的电平不能用整段 RMS,RMS 只反映最响的那一下。
+  const floor = Number(process.env.TURN_DIP_FLOOR || 0.462)
+  // 坑底继续下滑到多少(参考视频最后一秒又掉了 3.9 dB)。憋住的感觉来自这个"还在退",
+  // 平着托住反而像音乐只是小声了一点。
+  const sink = (floor * Math.pow(10, -3.9 / 20)).toFixed(4)
+  const slam = 0.05 // 砸上去的时间,对齐参考视频实测的 50 毫秒
+
   const a = dipStart.toFixed(3)
   const b = (dipStart + ramp).toFixed(3)
   const c = turnAt.toFixed(3)
-  const d = (turnAt + 0.5).toFixed(3)
-  const expr =
-    `if(lt(t,${a}),1,` +
-    `if(lt(t,${b}),1-(1-${floor})*(t-${a})/${ramp},` +
-    `if(lt(t,${c}),${floor},` +
-    `if(lt(t,${d}),${floor}+(1-${floor})*(t-${c})/0.5,1))))`
-  return `${base},volume=volume='${expr}':eval=frame`
+  const d = (turnAt + slam).toFixed(3)
+  const e = (turnAt + slam + TURN_HIGH_SEC).toFixed(3)
+  const f = (turnAt + slam + TURN_HIGH_SEC + TURN_DECAY_SEC).toFixed(3)
+  const B = boost.toFixed(4)
+
+  // 坑底那段有多长(滑到底之后到炸点之间)。TURN_DIP_SEC 小于 ramp 时可能为零,兜一下
+  const hold = Math.max(0.001, turnAt - (dipStart + ramp))
+
+  return (
+    `if(lt(t,${a}),1,` + // 正常
+    `if(lt(t,${b}),1-(1-${floor})*(t-${a})/${ramp},` + // 滑下去
+    `if(lt(t,${c}),${floor}-(${floor}-${sink})*(t-${b})/${hold.toFixed(3)},` + // 憋住,并继续慢慢退
+    `if(lt(t,${d}),${sink}+(${B}-${sink})*(t-${c})/${slam},` + // 砸上去(50ms)
+    `if(lt(t,${e}),${B},` + // 高能保持
+    `if(lt(t,${f}),${B}-(${B}-1)*(t-${e})/${TURN_DECAY_SEC},1))))))` // 衰减回原位
+  )
+}
+
+/**
+ * 反转点那个"停顿"要多长。参考视频停了 5.6 秒,但那是一条 32 秒的片子;
+ * 一百多秒的片子挖 5 秒空洞太赌完播率了,1.6 秒足够让人抬头。
+ */
+const TURN_GAP_SEC = Number(process.env.TURN_GAP_SEC || 1.6)
+/** 撞击落在停顿的第几秒。参考视频是停顿开始后约 3.4 秒砸下来,音乐先响、人声后回 */
+const TURN_SLAM_INTO_GAP = Number(process.env.TURN_SLAM_INTO_GAP || 1.05)
+
+/** 列出配音里所有的停顿 */
+async function detectPauses(voFile) {
+  const out = await ffmpegStderr([
+    '-v', 'info', '-i', voFile, '-af', 'silencedetect=n=-38dB:d=0.25', '-f', 'null', '-',
+  ])
+  const pauses = []
+  let start = null
+  for (const m of out.matchAll(/silence_(start|end): ([\d.]+)/g)) {
+    if (m[1] === 'start') start = Number(m[2])
+    else if (start != null) {
+      pauses.push({ start, end: Number(m[2]) })
+      start = null
+    }
+  }
+  return pauses
+}
+
+/**
+ * 在配音里给反转点凿出一个真正的停顿,并返回撞击应该落在第几秒。
+ *
+ * 这一步是整个反转音效能不能成立的前提。之前把撞击对齐到"第 N 个镜头的开头",
+ * 结果它落在半句话中间——旁白一直在说,音乐怎么憋、怎么砸都听不出来,
+ * 前面调的那些 dB 全是白调的。参考视频之所以有劲,是因为那三秒**人声是停的**。
+ *
+ * 做法:在名义反转点附近找一个现成的句间停顿(TTS 本来就会留半秒),
+ * 把它接长到 TURN_GAP_SEC,撞击落在停顿中间——音乐先炸,人声隔一会儿才回来。
+ */
+async function carveTurnGap(voFile, nominalAt, outFile, log) {
+  const pauses = await detectPauses(voFile)
+  if (!pauses.length) {
+    log('配音里找不到任何停顿,反转点只能按镜头对齐')
+    return null
+  }
+  // 只在名义反转点前后 6 秒里找,太远了对不上画面
+  const near = pauses.filter((p) => Math.abs(p.start - nominalAt) <= 6)
+  const pool = near.length ? near : pauses
+  const gap = pool.reduce((best, p) =>
+    Math.abs(p.start - nominalAt) < Math.abs(best.start - nominalAt) ? p : best)
+
+  const have = gap.end - gap.start
+  const need = Math.max(0, TURN_GAP_SEC - have)
+  // 撞击落在停顿里靠前的位置:音乐先炸,人声隔一会儿才回来
+  const slamAt = gap.start + Math.min(TURN_SLAM_INTO_GAP, (have + need) * 0.65)
+
+  if (need < 0.05) {
+    log(`反转点对齐到配音第 ${gap.start.toFixed(1)}s 的停顿(已有 ${have.toFixed(2)}s,不用加长)`)
+    return { voFile, slamAt, added: 0 }
+  }
+
+  // 从停顿正中切开,塞进一段静音。不能用 apad——它只会加在结尾
+  const mid = (gap.start + gap.end) / 2
+  const d = path.dirname(outFile)
+  const head = path.join(d, 'vo_head.wav')
+  const tail = path.join(d, 'vo_tail.wav')
+  const pad = path.join(d, 'vo_pad.wav')
+  await ffmpeg(['-v', 'error', '-i', voFile, '-t', mid.toFixed(3), '-ac', '1', '-ar', '48000', head])
+  await ffmpeg(['-v', 'error', '-ss', mid.toFixed(3), '-i', voFile, '-ac', '1', '-ar', '48000', tail])
+  await ffmpeg(['-v', 'error', '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=mono', '-t', need.toFixed(3), pad])
+  await ffmpeg(['-v', 'error', '-i', head, '-i', pad, '-i', tail,
+    '-filter_complex', '[0:a][1:a][2:a]concat=n=3:v=0:a=1[a]', '-map', '[a]', '-ar', '48000', outFile])
+
+  // slamAt 不用再修正:静音是从 mid 插进去的,而 gap.start < mid,
+  // 停顿开头在新旧时间轴上是同一个数
+  log(`反转点对齐到配音第 ${gap.start.toFixed(1)}s 的停顿,补了 ${need.toFixed(2)}s 静音凑够 ${TURN_GAP_SEC}s`)
+  return { voFile: outFile, slamAt, added: need }
+}
+
+/**
+ * 侧链钥匙的包络:高能段把钥匙压小,音乐就不闪避了。
+ * 注意这里改的是**送去做检测的那一路**,不是听得到的旁白——旁白走的是 vo_main。
+ */
+function keyEnvelope(turnAt) {
+  const env = turnEnvelope(turnAt)
+  if (!env) return `[vo_key0]anull[vo_key]`
+  const s = turnAt.toFixed(3)
+  const e = (turnAt + TURN_HIGH_SEC).toFixed(3)
+  const f = (turnAt + TURN_HIGH_SEC + TURN_DECAY_SEC).toFixed(3)
+  const k = Number(process.env.TURN_KEY_DUCK || 0.18).toFixed(3)
+  return (
+    `[vo_key0]volume=volume='` +
+    `if(lt(t,${s}),1,` +
+    `if(lt(t,${e}),${k},` +
+    `if(lt(t,${f}),${k}+(1-${k})*(t-${e})/${TURN_DECAY_SEC},1)))` +
+    `':eval=frame[vo_key]`
+  )
+}
+
+/** 全曲的淡入淡出(和反转包络分开:那个要在闪避之后才乘上去) */
+function bgmFades(totalDuration) {
+  const fadeOutStart = Math.max(0, totalDuration - 2.5).toFixed(3)
+  return `afade=t=in:st=0:d=1.5,afade=t=out:st=${fadeOutStart}:d=2.5`
 }
 
 /**
@@ -165,23 +308,37 @@ function audioFilter({ voInput, bgmInput, stingInput, totalDuration, turnAt }) {
   }
   const parts = [
     vo,
-    `[vo]asplit=2[vo_main][vo_key]`,
+    `[vo]asplit=2[vo_main][vo_key0]`,
+    // 炸点之后先把侧链的"钥匙"压小,让音乐在高能段不给人声让路。
+    // 只把包络乘在闪避之后是不够的:人声一回来,侧链照样把音乐按下去,
+    // 实测高能段中位比参考低了 2.8 dB,而且是一路往下掉,不是参考那种平着压住。
+    // 参考视频里炸点之后音乐是盖着人声响完 5 秒的,所以要从源头少闪避。
+    keyEnvelope(turnAt),
     // BGM 比成片短就循环补齐,长就裁掉
     // 高切:把 BGM 的低频让出来。男声基频在 120Hz 上下,撞击在 40-90Hz,
     // 音乐再占着这一段就会糊成一片。参考视频的音乐低频只占 29%,
     // 而生成的曲子普遍在 45-57%——不切的话压在旁白下面是闷的。
     `[${bgmInput}:a]aresample=48000,aloop=loop=-1:size=2147483647,atrim=0:${totalDuration.toFixed(3)},asetpts=N/SR/TB,` +
       `highpass=f=${BGM_HIGHPASS_HZ}:poles=2,` +
-      `volume=${BGM_GAIN_DB}dB,${bgmEnvelope(totalDuration, turnAt)}[bgm]`,
+      `volume=${BGM_GAIN_DB}dB,${bgmFades(totalDuration)}[bgm]`,
     `[bgm][vo_key]sidechaincompress=threshold=0.03:ratio=12:attack=25:release=350:makeup=1[bgm_ducked]`,
   ]
+
+  // 反转包络必须乘在闪避之后。放在前面的话,高能段那 +12 dB 会被侧链压回去,
+  // 而参考视频里恰恰相反:炸点之后音乐一直压着人声响,不让路。
+  const env = turnEnvelope(turnAt)
+  if (env) {
+    parts.push(`[bgm_ducked]volume=volume='${env}':eval=frame[bgm_final]`)
+  } else {
+    parts.push(`[bgm_ducked]anull[bgm_final]`)
+  }
 
   if (stingInput != null && turnAt != null) {
     // 撞击垫到反转点上。它不进侧链——这一下就是要盖过一切,让人抬头
     parts.push(`[${stingInput}:a]aresample=48000,adelay=${Math.round(turnAt * 1000)}|${Math.round(turnAt * 1000)}[sting]`)
-    parts.push(`[vo_main][bgm_ducked][sting]amix=inputs=3:duration=first:normalize=0[mix]`)
+    parts.push(`[vo_main][bgm_final][sting]amix=inputs=3:duration=first:normalize=0[mix]`)
   } else {
-    parts.push(`[vo_main][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mix]`)
+    parts.push(`[vo_main][bgm_final]amix=inputs=2:duration=first:normalize=0[mix]`)
   }
 
   parts.push(`[mix]loudnorm=I=${LOUDNESS_LUFS}:TP=-1.5:LRA=11,alimiter=limit=0.97[aout]`)
@@ -195,11 +352,22 @@ function audioFilter({ voInput, bgmInput, stingInput, totalDuration, turnAt }) {
  */
 async function makeSting(outFile) {
   const dur = 1.2
-  // 频率随时间下滑,相位是频率的积分,所以是 t - t^2 那一项
-  const expr = `0.9*exp(-3*t)*sin(2*PI*(90*t-20.8*t*t))`
+  // 低音扫频:90Hz 滑到 40Hz。相位是频率的积分,所以是 t - t² 那一项
+  const sub = `0.9*exp(-3*t)*sin(2*PI*(90*t-20.8*t*t))`
+  // 鼓的瞬态:一小撮宽频噪声,衰减极快。
+  // 参考视频实测炸点是"低音先进、50ms 后鼓跟上",光有低音只闷响一声、不够抓耳;
+  // 中高频那一下才是让人抬头的东西。
+  const hit = `0.5*exp(-26*t)*(random(0)*2-1)`
   await ffmpeg([
-    '-f', 'lavfi', '-i', `aevalsrc=${expr}:s=48000:d=${dur}`,
-    '-af', 'lowpass=f=160,afade=t=out:st=0.9:d=0.3',
+    '-f', 'lavfi', '-i', `aevalsrc=${sub}:s=48000:d=${dur}`,
+    '-f', 'lavfi', '-i', `aevalsrc=${hit}:s=48000:d=${dur}`,
+    '-filter_complex',
+      `[0:a]lowpass=f=160[low];` +
+      // 鼓延后 50ms,和参考视频的进入顺序对齐;带通掉极低频免得和低音打架
+      `[1:a]highpass=f=200,lowpass=f=6000,adelay=50|50[snap];` +
+      `[low][snap]amix=inputs=2:duration=first:normalize=0,` +
+      `afade=t=out:st=0.9:d=0.3,alimiter=limit=0.95[out]`,
+    '-map', '[out]',
     '-c:a', 'pcm_s16le', '-ac', '2',
     outFile,
   ])
@@ -215,8 +383,27 @@ export async function composeVideo(job, { downloadTo, log = () => {} }) {
   try {
     // 1. 拉素材
     const files = await downloadTo(dir)
-    const voFile = files.voiceover
+    let voFile = files.voiceover
     if (!voFile) throw new Error('没有配音文件,无法合成')
+
+    // 1.5 先在配音里凿出反转点的停顿。必须赶在算镜头时长之前——
+    //     插静音会把配音变长,镜头缩放是按配音长度算的。
+    const hasBgm0 = Boolean(files.bgm)
+    let slamAt = null
+    if (hasBgm0 && TURN_STING && job.turnShotIdx != null) {
+      const rawTotal0 = job.shots.reduce((s, sh) => s + (sh.durationSec || 0), 0)
+      const rawTurn = job.shots
+        .filter((sh) => sh.idx < job.turnShotIdx)
+        .reduce((s, sh) => s + (sh.durationSec || 0), 0)
+      const voDur0 = await probeDuration(voFile)
+      // 分镜时长是模型估的,只用它的比例去配音里定位,不用它的绝对值
+      const nominalAt = rawTotal0 > 0 ? (rawTurn / rawTotal0) * voDur0 : voDur0 / 2
+      const carved = await carveTurnGap(voFile, nominalAt, path.join(dir, 'voiceover_gap.wav'), log)
+      if (carved) {
+        voFile = carved.voFile
+        slamAt = carved.slamAt
+      }
+    }
 
     // 2. 成片时长对齐真实配音长度。分镜的 durationSec 是模型估的,
     //    直接用会导致画面比声音短一截或长一截。
@@ -249,7 +436,26 @@ export async function composeVideo(job, { downloadTo, log = () => {} }) {
       sh.startSec = t
       t += sh.scaledDuration
     }
-    const totalDuration = t
+    let totalDuration = t
+
+    // 让反转那一刀正好切在撞击上。撞击是按配音里的停顿定的,画面要跟着它走,
+    // 不能反过来——差个一秒,听到的和看到的就对不上,那一下就废了。
+    // 做法是把前半段压到 slamAt 结束、后半段撑满剩下的,总时长不变。
+    const turnPos = shots.findIndex((sh) => sh.idx === job.turnShotIdx)
+    if (slamAt != null && turnPos > 0 && slamAt > 1 && slamAt < totalDuration - 1) {
+      const before = shots.slice(0, turnPos).reduce((s, sh) => s + sh.scaledDuration, 0)
+      const after = totalDuration - before
+      const kBefore = slamAt / before
+      const kAfter = (totalDuration - slamAt) / after
+      let c = 0
+      shots.forEach((sh, i) => {
+        sh.scaledDuration = Math.max(1.0, sh.scaledDuration * (i < turnPos ? kBefore : kAfter))
+        sh.startSec = c
+        c += sh.scaledDuration
+      })
+      totalDuration = c
+      log(`画面切点对齐到撞击:第 ${turnPos} 个镜头起于 ${shots[turnPos].startSec.toFixed(2)}s`)
+    }
     log(`配音 ${voDuration.toFixed(1)}s → 成片 ${totalDuration.toFixed(1)}s,${shots.length} 个镜头`)
 
     // 3. 逐镜头渲染
@@ -274,9 +480,10 @@ export async function composeVideo(job, { downloadTo, log = () => {} }) {
     const outFile = path.join(dir, 'final.mp4')
     const hasBgm = Boolean(files.bgm)
 
-    // 反转点落在哪一秒:分镜标了就用,标的下标不存在就当没标
+    // 反转点落在哪一秒:优先用配音里量出来的停顿位置(音画已经对齐到它了),
+    // 没量到就退回分镜标的下标,再没有就当没标
     const turnShot = job.turnShotIdx == null ? null : shots.find((sh) => sh.idx === job.turnShotIdx)
-    const turnAt = turnShot ? turnShot.startSec : null
+    const turnAt = slamAt ?? (turnShot ? turnShot.startSec : null)
     const stingFile = hasBgm && TURN_STING && turnAt != null ? await makeSting(path.join(dir, 'sting.wav')) : null
     if (turnAt != null) log(`反转点在镜头 ${job.turnShotIdx} / ${turnAt.toFixed(1)}s${stingFile ? ',加低频撞击' : ''}`)
     // ass 滤镜的文件名要转义 : 和 \,否则会被当成参数分隔符

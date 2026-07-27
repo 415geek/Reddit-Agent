@@ -140,11 +140,13 @@ async function runStoryboard(item: ItemWithRelations) {
 const ASSET_BUDGET_MS = Number(process.env.ASSET_BUDGET_MS || 40_000)
 
 /**
- * 最多做几段图生视频。分镜模型一般给 3 段,但这是整条流水线最贵的一项——
- * 一段 720p 5秒约 $0.32,而静态图只要 $0.03,而且合成时本来就有推近/横移的运镜。
- * 想更省就调小,设 0 就是完全不用图生视频(成本掉到约七分之一)。
+ * 最多做几段图生视频。默认 0 —— 完全不做。
+ *
+ * 图生视频是整条流水线最贵的一项:实测账单里它占 90%(一段 720p 5秒约 $0.32,
+ * 而静态图只要 $0.03)。合成时静态图本来就有推近/拉远/横移的运镜,
+ * 国内不少知识号就是这个形态。要恢复动态镜头把这个值调大即可。
  */
-const MAX_MOTION_SHOTS = Number(process.env.MAX_MOTION_SHOTS ?? 3)
+const MAX_MOTION_SHOTS = Number(process.env.MAX_MOTION_SHOTS ?? 0)
 
 /**
  * 图生视频的否定约束。实测 Seedance 会自作主张给画面配上中文大标题和角标,
