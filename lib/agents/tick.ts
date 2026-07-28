@@ -82,6 +82,14 @@ export async function runPipelineTick(opts: { budgetMs?: number } = {}): Promise
       break
     }
 
+    // 视频线已停用,心跳不再推它。上线图文后第一轮 cron 就把库里的老视频
+    // 全推起来了——而 MEDIA_PROVIDER=gemini 下视频的动态镜头和配音只会拿到
+    // mock 占位文件:白烧生图的钱,产出还是废的。要重启视频线设 AUTO_VIDEO=on
+    if (item.kind === 'video' && process.env.AUTO_VIDEO !== 'on') {
+      result.skipped++
+      continue
+    }
+
     // 合成阶段不归这里管:它在等自托管 worker 来领,推它没有意义。
     // 图文没有这个阶段——卡片是 next/og 在函数里直接出的
     if (item.stage === 'compose') {
