@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { BgmMood, COVER_TEMPLATE_LABELS, ScriptBeats, Shot } from '@/lib/domain'
 import { ApprovalActions } from './approval-actions'
 import { AssetPreview } from './asset-preview'
+import { NotePreview } from './note-preview'
 
 const BEAT_LABELS: Array<[keyof ScriptBeats, string]> = [
   ['hook', '0-3秒 · 反常识钩子'],
@@ -20,8 +21,9 @@ export default async function ApprovalsPage() {
   const items = await prisma.contentItem.findMany({
     where: { stage: 'awaiting_approval' },
     include: {
-      topic: { include: { series: true } },
+      topic: { include: { series: true, sourceItem: true } },
       research: true,
+      notes: { orderBy: { version: 'desc' }, take: 1 },
       scripts: { orderBy: { version: 'desc' }, take: 1 },
       storyboards: { orderBy: { version: 'desc' }, take: 1 },
       assets: true,
@@ -34,7 +36,7 @@ export default async function ApprovalsPage() {
       <div>
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900">审批队列</h1>
         <p className="text-[13px] sm:text-sm text-gray-500 mt-1">
-          {items.length} 条待审批。批准后请在抖音发布(勾选AI生成内容声明),再到「已发布」页登记链接。
+          {items.length} 条待审批。批准后:长按存图 → 复制文案 → 去小红书发布(勾选 AI 声明),再到「已发布」页登记链接。
         </p>
       </div>
 
@@ -45,6 +47,60 @@ export default async function ApprovalsPage() {
       )}
 
       {items.map((item) => {
+        // ── 图文:整组卡片 + 一键复制文案 ────────────────────────────────
+        if (item.kind === 'note') {
+          const note = item.notes[0]
+          const cards = item.assets
+            .filter((a) => a.kind === 'card_final')
+            .sort((a, b) => (a.shotIndex ?? 0) - (b.shotIndex ?? 0))
+            .map((a) => ({ idx: a.shotIndex ?? 0, url: `/api/assets/${a.path}` }))
+          const noteQc = note?.qcReport as { notes?: string } | null
+          return (
+            <Card key={item.id}>
+              <CardHeader>
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4">
+                  <div className="min-w-0">
+                    <CardTitle className="text-base sm:text-lg">
+                      {note ? `${note.titleTop} / ${note.titleBottom}` : item.title}
+                    </CardTitle>
+                    <div className="flex gap-2 mt-2 flex-wrap">
+                      <Badge variant="default">小红书图文</Badge>
+                      <Badge variant="none">{cards.length} 张卡</Badge>
+                      {item.topic.sourceItem && <Badge variant="outline">{item.topic.sourceItem.source}</Badge>}
+                    </div>
+                  </div>
+                  <ApprovalActions id={item.id} />
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {note && (
+                  <NotePreview
+                    cards={cards}
+                    noteTitle={note.noteTitle}
+                    bodyText={note.bodyText}
+                    hashtags={note.hashtags}
+                  />
+                )}
+                {noteQc?.notes && (
+                  <div className="rounded-md bg-green-50 border border-green-200 p-3">
+                    <p className="text-xs font-semibold text-green-700">质检意见</p>
+                    <p className="text-sm text-green-800 mt-0.5">{noteQc.notes}</p>
+                  </div>
+                )}
+                {item.topic.sourceItem && (
+                  <p className="text-xs text-gray-400">
+                    素材来源:
+                    <a className="underline hover:text-orange-600" href={item.topic.sourceItem.url} target="_blank" rel="noreferrer">
+                      {item.topic.sourceItem.title}
+                    </a>
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )
+        }
+
+        // ── 视频(停用但保留):原样 ──────────────────────────────────────
         const script = item.scripts[0]
         const beats = (script?.beats ?? {}) as unknown as ScriptBeats
         const shots = ((item.storyboards[0]?.shots ?? []) as unknown as Shot[]) || []

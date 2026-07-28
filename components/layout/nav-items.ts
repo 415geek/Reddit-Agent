@@ -1,4 +1,4 @@
-import { CheckCircle2, Factory, LayoutDashboard, LineChart, Lightbulb, Send, Settings, type LucideIcon } from 'lucide-react'
+import { CheckCircle2, Factory, LayoutDashboard, LineChart, Lightbulb, Newspaper, Send, Settings, type LucideIcon } from 'lucide-react'
 
 export interface NavItem {
   href: string
@@ -12,6 +12,7 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard', icon: LayoutDashboard, label: '总览', short: '总览', tab: true },
+  { href: '/dashboard/sources', icon: Newspaper, label: '素材库', short: '素材' },
   { href: '/dashboard/topics', icon: Lightbulb, label: '选题库', short: '选题', tab: true },
   { href: '/dashboard/production', icon: Factory, label: '生产中', short: '生产', tab: true },
   { href: '/dashboard/approvals', icon: CheckCircle2, label: '审批队列', short: '审批', tab: true },
