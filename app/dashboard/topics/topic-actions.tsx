@@ -68,7 +68,12 @@ export function TopicActions({ id, status, className }: { id: string; status: st
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: next }),
       })
-      const json = (await res.json()) as { itemId?: string; kind?: string }
+      const json = (await res.json()) as { itemId?: string; kind?: string; error?: string }
+      if (!res.ok) {
+        setError(json.error ?? '操作失败')
+        router.refresh()
+        return
+      }
 
       // 图文入队 → 当场推到底。视频选题不自动推(那条线停用)
       if (next === 'queued' && json.itemId && json.kind === 'note') {

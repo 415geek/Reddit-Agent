@@ -12,10 +12,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
   const topic = await prisma.topic.update({ where: { id: params.id }, data: { status } })
 
-  // 入队即建生产单元。kind 按选题出身定:挂着采集素材的是图文,老的种子选题是视频。
-  // 不能靠 schema 的默认值——默认是 note,把一条视频选题入队会走错阶段机
+  // 入队即建生产单元。只有挂着采集素材的图文选题能入队——
+  // 老的视频选题入队会创建一条永远没人推的视频条目(视频线停用、
+  // 生产页也不显示),对用户来说就是"点了之后消失了"。直接拒绝,说清原因。
   if (status === 'queued') {
-    const kind = topic.source === 'source_item' ? 'note' : 'video'
+    if (topic.source !== 'source_item') {
+      await prisma.topic.update({ where: { id: topic.id }, data: { status: 'retired' } })
+      return NextResponse.json(
+        { error: '这是旧视频线的选题,不能入队生产图文。图文选题由每日采集自动生成,请从带来源的选题里挑。' },
+        { status: 400 },
+      )
+    }
+    const kind = 'note'
     const item = await prisma.contentItem.create({ data: { topicId: topic.id, title: topic.title, kind } })
     await prisma.topic.update({ where: { id: topic.id }, data: { status: 'in_production' } })
     return NextResponse.json({ ok: true, topic: { id: topic.id, status: 'in_production' }, itemId: item.id, kind })
