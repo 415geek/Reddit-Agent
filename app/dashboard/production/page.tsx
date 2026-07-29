@@ -1,114 +1,142 @@
 export const dynamic = 'force-dynamic'
 
+import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { STAGES, STAGE_LABELS } from '@/lib/domain'
+import { NOTE_STAGES, NoteCard } from '@/lib/domain'
 import { formatRelative } from '@/lib/utils'
-import { AdvanceButton } from './advance-button'
-
-const PIPELINE_STAGES = [...STAGES.filter((s) => s !== 'awaiting_approval'), 'awaiting_approval', 'rejected'] as string[]
+import { AutoRunner } from './auto-runner'
 
 /**
- * 图片资产阶段的进度。这一阶段一次推进只做够 40 秒的活,要十几轮才做得完,
- * 中间还有几轮是在等图生视频返回、什么都不产出——不把进度摆出来,
- * 卡片每轮都长得一模一样,只会让人以为卡死了。
+ * 生产页,图文专用。这一页没有任何"推进"按钮——
+ * 打开页面的那一刻每个在产条目就自己开始跑(AutoRunner),
+ * 跑完自动进审批。老板在这一页唯一的动作是"看一眼进度"。
+ *
+ * 视频那条线已停用,不再按八个阶段铺一屏卡片;
+ * 还压在库里的视频条目收进底部一行,免得占地方。
  */
-function assetProgress(item: {
-  storyboards: { shots: unknown }[]
-  assets: { kind: string }[]
-}) {
-  const shotList = (item.storyboards[0]?.shots ?? []) as Array<{ type?: string }>
-  const shots = shotList.length
-  if (!shots) return null
-  // 要和流水线的口径一致:真正会去做图生视频的只有前 MAX_MOTION_SHOTS 个 motion 镜头,
-  // 按分镜里标了几个 motion 来数,关掉图生视频之后看板会一直显示"还差",其实早就够了
-  const maxMotion = Number(process.env.MAX_MOTION_SHOTS ?? 0)
-  const wantMotions = Math.min(shotList.filter((s) => s.type === 'motion').length, maxMotion)
-  const images = item.assets.filter((a) => a.kind === 'shot_image').length
-  const motions = item.assets.filter((a) => a.kind === 'motion_clip').length
-  const total = shots + wantMotions
-  const done = Math.min(images, shots) + Math.min(motions, wantMotions)
-  return { shots, wantMotions, images, motions, remaining: Math.max(0, total - done), ratio: total ? done / total : 0 }
+
+function cardProgress(item: { notes: { cards: unknown }[]; assets: { kind: string }[] }) {
+  const cards = (item.notes[0]?.cards ?? []) as NoteCard[]
+  if (!cards.length) return null
+  const done = item.assets.filter((a) => a.kind === 'card_final').length
+  return { done, total: cards.length, ratio: done / cards.length }
 }
 
 export default async function ProductionPage() {
-  const items = await prisma.contentItem.findMany({
-    where: { stage: { notIn: ['approved', 'published'] } },
-    include: {
-      topic: true,
-      events: { orderBy: { createdAt: 'desc' }, take: 1 },
-      // 资产阶段要能一眼看出做到哪了,不然卡片长得都一样,以为卡住了
-      storyboards: { orderBy: { version: 'desc' }, take: 1 },
-      assets: { select: { kind: true } },
-    },
-    orderBy: { updatedAt: 'desc' },
-  })
-  const byStage = new Map<string, typeof items>()
-  for (const s of PIPELINE_STAGES) byStage.set(s, [])
-  for (const item of items) {
-    if (!byStage.has(item.stage)) byStage.set(item.stage, [])
-    byStage.get(item.stage)!.push(item)
-  }
+  const inFlightStages = NOTE_STAGES.filter((s) => s !== 'awaiting_approval') as string[]
+  const [inFlight, awaiting, rejected, videoCount] = await Promise.all([
+    prisma.contentItem.findMany({
+      where: { kind: 'note', stage: { in: inFlightStages } },
+      include: {
+        events: { orderBy: { createdAt: 'desc' }, take: 1 },
+        notes: { orderBy: { version: 'desc' }, take: 1, select: { cards: true } },
+        assets: { select: { kind: true } },
+      },
+      orderBy: { stageEnteredAt: 'asc' },
+    }),
+    prisma.contentItem.findMany({
+      where: { kind: 'note', stage: 'awaiting_approval' },
+      orderBy: { producedAt: 'desc' },
+      take: 20,
+      select: { id: true, title: true, producedAt: true },
+    }),
+    prisma.contentItem.findMany({
+      where: { kind: 'note', stage: 'rejected' },
+      orderBy: { updatedAt: 'desc' },
+      take: 8,
+      select: { id: true, title: true, updatedAt: true },
+    }),
+    prisma.contentItem.count({ where: { kind: 'video', stage: { notIn: ['approved', 'published', 'rejected'] } } }),
+  ])
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900">生产中</h1>
         <p className="text-[13px] sm:text-sm text-gray-500 mt-1">
-          流水线:研究 → 脚本 → 分镜 → 图片 → 配音 → 合成 → 质检 → 审批。可手动逐段推进,也可由 n8n 自动推进。
+          入队后全自动:核实 → 写稿 → 质检 → 出图渲卡。这一页不需要点任何东西,做完的自己进审批。
         </p>
       </div>
 
-      {/* 手机单列:auto-fill 的 240px 最小宽在 393px 屏上只能排一列,还白白留一截空 */}
-      <div className="grid gap-3 sm:gap-4 sm:[grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]">
-        {PIPELINE_STAGES.map((stage) => {
-          const list = byStage.get(stage) ?? []
-          return (
-            <Card key={stage} className={list.length === 0 ? 'opacity-60' : ''}>
-              <CardHeader className="p-4 pb-2">
-                <CardTitle className="text-sm flex items-center justify-between">
-                  <span>{STAGE_LABELS[stage] ?? stage}</span>
-                  <span className="text-xs font-normal text-gray-400">{list.length}</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 pt-0 space-y-3">
-                {list.map((item) => {
-                  const lastEvent = item.events[0]
-                  const failed = lastEvent?.status === 'failed'
-                  const progress = stage === 'assets' ? assetProgress(item) : null
-                  return (
-                    <div key={item.id} className="rounded-md border p-3 space-y-2 bg-white">
-                      <p className="text-sm font-medium text-gray-900 leading-snug">{item.title}</p>
-                      <p className="text-xs text-gray-400">{formatRelative(item.stageEnteredAt)}</p>
-                      {progress && (
-                        <div>
-                          <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
-                            <div
-                              className="h-full bg-orange-500 transition-all"
-                              style={{ width: `${Math.round(progress.ratio * 100)}%` }}
-                            />
-                          </div>
-                          <p className="text-xs text-gray-500 mt-1">
-                            图 {progress.images}/{progress.shots}
-                            {progress.wantMotions > 0 ? ` · 动态 ${progress.motions}/${progress.wantMotions}` : ''}
-                            {progress.remaining > 0 ? ` · 还差 ${progress.remaining}` : ' · 已齐'}
-                          </p>
-                        </div>
-                      )}
-                      {failed && (
-                        <p className="text-xs text-red-500 line-clamp-3">{lastEvent.error}</p>
-                      )}
-                      {stage !== 'awaiting_approval' && stage !== 'rejected' && (
-                        <AdvanceButton id={item.id} />
-                      )}
-                    </div>
-                  )
-                })}
-              </CardContent>
-            </Card>
-          )
-        })}
-      </div>
+      <Card>
+        <CardHeader className="p-4 pb-2">
+          <CardTitle className="text-sm flex items-center justify-between">
+            <span>生成中</span>
+            <span className="text-xs font-normal text-gray-400">{inFlight.length}</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-4 pt-0 space-y-3">
+          {inFlight.length === 0 && (
+            <p className="py-6 text-center text-gray-400 text-sm">
+              没有在产的内容。去
+              <Link href="/dashboard/topics" className="text-orange-600 underline mx-1">
+                选题库
+              </Link>
+              挑一条入队,剩下的全自动。
+            </p>
+          )}
+          {inFlight.map((item) => {
+            const lastEvent = item.events[0]
+            const failed = lastEvent?.status === 'failed'
+            const progress = cardProgress(item)
+            return (
+              <div key={item.id} className="rounded-md border p-3 space-y-2 bg-white">
+                <p className="text-sm font-medium text-gray-900 leading-snug">{item.title}</p>
+                <p className="text-xs text-gray-400">{formatRelative(item.stageEnteredAt)}</p>
+                {progress && (
+                  <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                    <div className="h-full bg-orange-500 transition-all" style={{ width: `${Math.round(progress.ratio * 100)}%` }} />
+                  </div>
+                )}
+                {failed && <p className="text-xs text-red-500 line-clamp-2">{lastEvent.error}</p>}
+                <AutoRunner id={item.id} stage={item.stage} />
+              </div>
+            )
+          })}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="p-4 pb-2">
+          <CardTitle className="text-sm flex items-center justify-between">
+            <span>待审批(去复制发布)</span>
+            <span className="text-xs font-normal text-gray-400">{awaiting.length}</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-4 pt-0 space-y-2">
+          {awaiting.length === 0 && <p className="py-4 text-center text-gray-400 text-sm">还没有做完的。</p>}
+          {awaiting.map((item) => (
+            <Link
+              key={item.id}
+              href="/dashboard/approvals"
+              className="block rounded-md border p-3 bg-white hover:border-orange-300 transition"
+            >
+              <p className="text-sm font-medium text-gray-900 leading-snug">{item.title}</p>
+              <p className="text-xs text-green-600 mt-1">✓ 已生成 · 点击去审批页复制发布</p>
+            </Link>
+          ))}
+        </CardContent>
+      </Card>
+
+      {rejected.length > 0 && (
+        <details className="text-sm text-gray-500">
+          <summary className="cursor-pointer">已拒绝({rejected.length})</summary>
+          <div className="mt-2 space-y-1">
+            {rejected.map((i) => (
+              <p key={i.id} className="text-xs text-gray-400">
+                {i.title} · {formatRelative(i.updatedAt)}
+              </p>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {videoCount > 0 && (
+        <p className="text-xs text-gray-400">
+          另有 {videoCount} 条旧的短视频内容压在库里(视频线已停用,不再自动生产)。
+        </p>
+      )}
     </div>
   )
 }

@@ -3,11 +3,15 @@
 import { useState } from 'react'
 
 /**
- * 图文的审批预览:整组卡片横滑 + 发布文案一键复制。
+ * 图文的审批预览:卡片点开放大逐张保存 + 发布文案一键复制。
  *
  * 小红书没有开放发布 API,最后一步永远是人拿手机发。
- * 所以这一页的目标是把"发"变成三个动作:存图、粘贴文案、点发布——
- * 复制按钮把 标题/正文/话题 一次拼好,不用在手机上来回选字。
+ * 所以这一页照着"手机发布"这个动作设计:
+ *   点一张卡 → 全屏放大 → 长按存入相册(iOS/安卓的原生动作,存的就是原图)
+ *   → 存完点右上角下一张,顺序过完六张 → 回来点「复制全部文案」→ 去小红书粘贴。
+ *
+ * 之前只有 zip 打包,但 zip 在 iPhone 上落进"文件"App,还得手动挪去相册,
+ * 反而多两步——打包降级成角落里的小链接,给电脑用。
  */
 
 export function NotePreview({
@@ -24,6 +28,8 @@ export function NotePreview({
   hashtags: string[]
 }) {
   const [copied, setCopied] = useState<string | null>(null)
+  /** 当前放大的卡片下标(cards 数组下标,不是 idx),null = 没放大 */
+  const [viewing, setViewing] = useState<number | null>(null)
 
   async function copy(kind: string, text: string) {
     try {
@@ -38,22 +44,61 @@ export function NotePreview({
 
   const tags = hashtags.map((h) => `#${h}`).join(' ')
   const full = `${noteTitle}\n\n${bodyText}\n\n${tags}`
+  const current = viewing != null ? cards[viewing] : null
 
   return (
     <div className="space-y-4">
-      {/* 卡片横滑。手机上一屏一张半,能预感到还有下一张 */}
+      {/* 卡片横滑,点一张放大 */}
       <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1 snap-x">
-        {cards.map((c) => (
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img
-            key={c.idx}
-            src={c.url}
-            alt={`第${c.idx + 1}张`}
-            className="h-64 sm:h-80 w-auto rounded-lg border border-gray-200 shrink-0 snap-start"
-            loading="lazy"
-          />
+        {cards.map((c, i) => (
+          <button key={c.idx} onClick={() => setViewing(i)} className="relative shrink-0 snap-start">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={c.url}
+              alt={`第${c.idx + 1}张`}
+              className="h-64 sm:h-80 w-auto rounded-lg border border-gray-200"
+              loading="lazy"
+            />
+            <span className="absolute bottom-1.5 right-1.5 rounded bg-black/55 px-1.5 py-0.5 text-[11px] text-white">
+              {c.idx + 1}/{cards.length} · 点开保存
+            </span>
+          </button>
         ))}
       </div>
+
+      {/* 全屏查看:长按存相册 */}
+      {current && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex flex-col" onClick={() => setViewing(null)}>
+          <div className="flex items-center justify-between px-4 py-3 text-white" onClick={(e) => e.stopPropagation()}>
+            <span className="text-sm">
+              第 {current.idx + 1} / {cards.length} 张 · <span className="text-orange-300">长按图片存入相册</span>
+            </span>
+            <div className="flex items-center gap-3">
+              {viewing! > 0 && (
+                <button onClick={() => setViewing(viewing! - 1)} className="rounded-lg bg-white/15 px-3 py-1.5 text-sm">
+                  上一张
+                </button>
+              )}
+              {viewing! < cards.length - 1 && (
+                <button onClick={() => setViewing(viewing! + 1)} className="rounded-lg bg-white/15 px-3 py-1.5 text-sm">
+                  下一张
+                </button>
+              )}
+              <button onClick={() => setViewing(null)} className="rounded-lg bg-white/15 px-3 py-1.5 text-sm">
+                关闭 ✕
+              </button>
+            </div>
+          </div>
+          {/* 图本体不关闭浮层:长按弹出的是系统菜单,误触外面才关 */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={current.url}
+            alt={`第${current.idx + 1}张`}
+            className="flex-1 min-h-0 w-full object-contain px-2 pb-4"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
 
       <div className="rounded-lg bg-gray-50 border border-gray-100 p-3 space-y-2">
         <p className="text-sm font-semibold text-gray-900">{noteTitle}</p>
@@ -61,7 +106,7 @@ export function NotePreview({
         <p className="text-[13px] text-blue-600">{tags}</p>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => copy('full', full)}
           className="px-3 py-2 rounded-lg bg-orange-500 text-white text-sm font-medium active:scale-95 transition"
@@ -80,11 +125,8 @@ export function NotePreview({
         >
           {copied === 'body' ? '已复制 ✓' : '只复制正文+话题'}
         </button>
-        <a
-          href={`/api/items/${itemId}/cards.zip`}
-          className="px-3 py-2 rounded-lg bg-gray-800 text-white text-sm active:scale-95 transition"
-        >
-          打包下载({cards.length}张图+文案)
+        <a href={`/api/items/${itemId}/cards.zip`} className="text-xs text-gray-400 underline ml-auto">
+          电脑打包下载
         </a>
       </div>
     </div>
