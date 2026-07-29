@@ -85,3 +85,22 @@ export async function readAsset(relPath: string) {
 export function assetUrl(relPath: string) {
   return `/api/assets/${relPath}`
 }
+
+/**
+ * 给一个资产签一条限时直链(只在 Supabase 后端下有)。
+ *
+ * 用在大文件下载上:Vercel 函数的响应体上限约 4.5MB,六张卡的 zip 有 10MB,
+ * 从函数里吐会被掐掉。签个名让浏览器直接从 Supabase 下,函数只出一个 302。
+ */
+export async function signedAssetUrl(relPath: string, expiresSec = 3600): Promise<string | null> {
+  const sb = supabaseConfig()
+  if (!sb) return null
+  const res = await fetch(`${sb.url}/storage/v1/object/sign/${BUCKET}/${relPath}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${sb.key}`, apikey: sb.key, 'content-type': 'application/json' },
+    body: JSON.stringify({ expiresIn: expiresSec }),
+  })
+  if (!res.ok) return null
+  const json = (await res.json()) as { signedURL?: string }
+  return json.signedURL ? `${sb.url}/storage/v1${json.signedURL}` : null
+}

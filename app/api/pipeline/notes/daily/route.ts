@@ -23,8 +23,10 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as { pick?: number; queue?: number }
 
   const collected = await collectSources({ budgetMs: 25_000 })
-  const picked = await pickNoteTopics(body.pick ?? 5)
-  const queued = await queueNoteTopics(body.queue ?? 3)
+  const picked = await pickNoteTopics(body.pick ?? 6)
+  // 默认不自动排产(queue=0):选题是人的活。cron 只负责把池子填满,
+  // 老板在选题库里点「入队」,那之后才全自动。要回到全自动排产,调用时传 queue>0
+  const queued = await queueNoteTopics(body.queue ?? 0)
 
   return NextResponse.json({
     collected: { inserted: collected.inserted, duplicates: collected.duplicates, errors: collected.errors },

@@ -11,11 +11,13 @@ import { useState } from 'react'
  */
 
 export function NotePreview({
+  itemId,
   cards,
   noteTitle,
   bodyText,
   hashtags,
 }: {
+  itemId: string
   cards: Array<{ idx: number; url: string }>
   noteTitle: string
   bodyText: string
@@ -78,6 +80,12 @@ export function NotePreview({
         >
           {copied === 'body' ? '已复制 ✓' : '只复制正文+话题'}
         </button>
+        <a
+          href={`/api/items/${itemId}/cards.zip`}
+          className="px-3 py-2 rounded-lg bg-gray-800 text-white text-sm active:scale-95 transition"
+        >
+          打包下载({cards.length}张图+文案)
+        </a>
       </div>
     </div>
   )

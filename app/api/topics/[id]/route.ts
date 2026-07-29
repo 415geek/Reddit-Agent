@@ -12,11 +12,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
   const topic = await prisma.topic.update({ where: { id: params.id }, data: { status } })
 
-  // 入队即建生产单元
+  // 入队即建生产单元。kind 按选题出身定:挂着采集素材的是图文,老的种子选题是视频。
+  // 不能靠 schema 的默认值——默认是 note,把一条视频选题入队会走错阶段机
   if (status === 'queued') {
-    const item = await prisma.contentItem.create({ data: { topicId: topic.id, title: topic.title } })
+    const kind = topic.source === 'source_item' ? 'note' : 'video'
+    const item = await prisma.contentItem.create({ data: { topicId: topic.id, title: topic.title, kind } })
     await prisma.topic.update({ where: { id: topic.id }, data: { status: 'in_production' } })
-    return NextResponse.json({ ok: true, topic: { id: topic.id, status: 'in_production' }, itemId: item.id })
+    return NextResponse.json({ ok: true, topic: { id: topic.id, status: 'in_production' }, itemId: item.id, kind })
   }
   return NextResponse.json({ ok: true, topic: { id: topic.id, status: topic.status } })
 }

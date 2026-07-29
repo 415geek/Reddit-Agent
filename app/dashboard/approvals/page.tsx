@@ -75,6 +75,7 @@ export default async function ApprovalsPage() {
               <CardContent className="space-y-4">
                 {note && (
                   <NotePreview
+                    itemId={item.id}
                     cards={cards}
                     noteTitle={note.noteTitle}
                     bodyText={note.bodyText}
