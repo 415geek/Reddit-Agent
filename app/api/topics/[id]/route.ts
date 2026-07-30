@@ -16,7 +16,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // 老的视频选题入队会创建一条永远没人推的视频条目(视频线停用、
   // 生产页也不显示),对用户来说就是"点了之后消失了"。直接拒绝,说清原因。
   if (status === 'queued') {
-    if (topic.source !== 'source_item') {
+    if (topic.source !== 'source_item' && topic.source !== 'web_search') {
       await prisma.topic.update({ where: { id: topic.id }, data: { status: 'retired' } })
       return NextResponse.json(
         { error: '这是旧视频线的选题,不能入队生产图文。图文选题由每日采集自动生成,请从带来源的选题里挑。' },

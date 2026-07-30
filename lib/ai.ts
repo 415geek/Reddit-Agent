@@ -71,3 +71,44 @@ export async function generateJSON<T>(opts: {
   if ('value' in second) return second.value
   throw new Error(`AI 输出两次都不是合法JSON:${second.error}`)
 }
+
+/**
+ * 带联网搜索的 JSON 生成。给"补题"用:模型自己去搜,再把搜到的整理成选题。
+ *
+ * 和 generateJSON 分开写,因为形状完全不同:
+ * 返回的 content 里混着 server_tool_use / web_search_tool_result / text 三种块,
+ * JSON 在最后的 text 块里;搜索本身要花 20-40 秒,serverless 60 秒上限内
+ * 只够跑一次,所以不做解析失败重试——parseLoose 的修复能力就是兜底。
+ */
+export async function generateJSONWithSearch<T>(opts: {
+  system: string
+  user: string
+  maxTokens?: number
+  maxSearches?: number
+  mockKey: string
+  mockParams?: Record<string, unknown>
+}): Promise<T> {
+  if (aiMockEnabled()) {
+    return getMockFixture(opts.mockKey, opts.mockParams) as T
+  }
+  const res = await client().messages.create({
+    model: DEFAULT_MODEL,
+    max_tokens: opts.maxTokens ?? 8192,
+    thinking: { type: 'disabled' },
+    // SDK 0.39 的类型表里还没有 server tool,运行时是认的——API 按 JSON 收
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: opts.maxSearches ?? 6 }] as never,
+    system: opts.system,
+    messages: [{ role: 'user', content: opts.user }],
+  })
+  // 引用会把 text 切成好几块,拼回来再找 JSON
+  const text = res.content
+    .filter((b) => b.type === 'text')
+    .map((b) => (b as { text: string }).text)
+    .join('')
+  const parsed = parseLoose<T>(stripFences(text.slice(text.indexOf('['))))
+  if ('value' in parsed) return parsed.value
+  const parsed2 = parseLoose<T>(stripFences(text))
+  if ('value' in parsed2) return parsed2.value
+  throw new Error(`联网选题输出不是合法JSON:${parsed.error};原文开头:${text.slice(0, 200)}`)
+}
+
