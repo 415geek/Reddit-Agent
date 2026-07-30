@@ -1,4 +1,4 @@
-import { CheckCircle2, Factory, LayoutDashboard, LineChart, Lightbulb, Newspaper, Send, Settings, type LucideIcon } from 'lucide-react'
+import { CheckCircle2, Lightbulb, Newspaper, Send, Settings, type LucideIcon } from 'lucide-react'
 
 export interface NavItem {
   href: string
@@ -11,13 +11,12 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { href: '/dashboard', icon: LayoutDashboard, label: '总览', short: '总览', tab: true },
-  { href: '/dashboard/sources', icon: Newspaper, label: '素材库', short: '素材' },
   { href: '/dashboard/topics', icon: Lightbulb, label: '选题库', short: '选题', tab: true },
-  { href: '/dashboard/production', icon: Factory, label: '生产中', short: '生产', tab: true },
-  { href: '/dashboard/approvals', icon: CheckCircle2, label: '审批队列', short: '审批', tab: true },
+  { href: '/dashboard/approvals', icon: CheckCircle2, label: '已完成', short: '已完成', tab: true },
+  // 下面这些不在主导航里,收进"更多"。页面都还在,直接输网址也能到——
+  // 老板的日常动线只有两步:选题库挑题 → 已完成复制发布,其余是偶尔才看的后台
+  { href: '/dashboard/sources', icon: Newspaper, label: '素材库', short: '素材' },
   { href: '/dashboard/published', icon: Send, label: '已发布·数据', short: '已发布' },
-  { href: '/dashboard/insights', icon: LineChart, label: '复盘', short: '复盘' },
   { href: '/dashboard/settings', icon: Settings, label: '设置', short: '设置' },
 ]
 

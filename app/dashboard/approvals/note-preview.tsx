@@ -108,22 +108,22 @@ export function NotePreview({
 
       <div className="flex flex-wrap items-center gap-2">
         <button
-          onClick={() => copy('full', full)}
+          onClick={() => copy('title', noteTitle)}
           className="px-3 py-2 rounded-lg bg-orange-500 text-white text-sm font-medium active:scale-95 transition"
         >
-          {copied === 'full' ? '已复制 ✓' : '复制全部文案'}
-        </button>
-        <button
-          onClick={() => copy('title', noteTitle)}
-          className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm active:scale-95 transition"
-        >
-          {copied === 'title' ? '已复制 ✓' : '只复制标题'}
+          {copied === 'title' ? '已复制 ✓' : '① 复制标题'}
         </button>
         <button
           onClick={() => copy('body', `${bodyText}\n\n${tags}`)}
+          className="px-3 py-2 rounded-lg bg-orange-500 text-white text-sm font-medium active:scale-95 transition"
+        >
+          {copied === 'body' ? '已复制 ✓' : '② 复制正文+话题'}
+        </button>
+        <button
+          onClick={() => copy('full', full)}
           className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm active:scale-95 transition"
         >
-          {copied === 'body' ? '已复制 ✓' : '只复制正文+话题'}
+          {copied === 'full' ? '已复制 ✓' : '合并复制'}
         </button>
         <a href={`/api/items/${itemId}/cards.zip`} className="text-xs text-gray-400 underline ml-auto">
           电脑打包下载

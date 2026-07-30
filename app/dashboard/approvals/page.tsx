@@ -7,6 +7,8 @@ import { BgmMood, COVER_TEMPLATE_LABELS, ScriptBeats, Shot } from '@/lib/domain'
 import { ApprovalActions } from './approval-actions'
 import { AssetPreview } from './asset-preview'
 import { NotePreview } from './note-preview'
+import { AutoRunner } from '../production/auto-runner'
+import { NOTE_STAGES } from '@/lib/domain'
 
 const BEAT_LABELS: Array<[keyof ScriptBeats, string]> = [
   ['hook', '0-3秒 · 反常识钩子'],
@@ -18,31 +20,56 @@ const BEAT_LABELS: Array<[keyof ScriptBeats, string]> = [
 ]
 
 export default async function ApprovalsPage() {
-  const items = await prisma.contentItem.findMany({
-    where: { stage: 'awaiting_approval' },
-    include: {
-      topic: { include: { series: true, sourceItem: true } },
-      research: true,
-      notes: { orderBy: { version: 'desc' }, take: 1 },
-      scripts: { orderBy: { version: 'desc' }, take: 1 },
-      storyboards: { orderBy: { version: 'desc' }, take: 1 },
-      assets: true,
-    },
-    orderBy: { stageEnteredAt: 'asc' },
-  })
+  const inFlightStages = NOTE_STAGES.filter((st) => st !== 'awaiting_approval') as string[]
+  const [items, generating] = await Promise.all([
+    prisma.contentItem.findMany({
+      where: { stage: 'awaiting_approval' },
+      include: {
+        topic: { include: { series: true, sourceItem: true } },
+        research: true,
+        notes: { orderBy: { version: 'desc' }, take: 1 },
+        scripts: { orderBy: { version: 'desc' }, take: 1 },
+        storyboards: { orderBy: { version: 'desc' }, take: 1 },
+        assets: true,
+      },
+      orderBy: { stageEnteredAt: 'desc' },
+    }),
+    // 生成中的也摆在这一页顶上:老板只认识两个页面,进度就得在他看的地方。
+    // AutoRunner 顺便接管推进——打开这页,没跑完的会继续跑
+    prisma.contentItem.findMany({
+      where: { kind: 'note', stage: { in: inFlightStages } },
+      select: { id: true, title: true, stage: true },
+      orderBy: { stageEnteredAt: 'asc' },
+    }),
+  ])
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">审批队列</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">已完成</h1>
         <p className="text-[13px] sm:text-sm text-gray-500 mt-1">
-          {items.length} 条待审批。批准后:长按存图 → 复制文案 → 去小红书发布(勾选 AI 声明),再到「已发布」页登记链接。
+          发布三步:复制标题 → 复制正文+话题 → 点开每张图长按保存。发到小红书时记得勾选 AI 声明。
         </p>
       </div>
 
-      {items.length === 0 && (
+      {generating.length > 0 && (
         <Card>
-          <CardContent className="py-12 text-center text-gray-400">队列为空。生产完成的内容会出现在这里。</CardContent>
+          <CardContent className="py-3 space-y-2">
+            {generating.map((g) => (
+              <div key={g.id} className="flex items-center justify-between gap-3">
+                <p className="text-sm text-gray-700 truncate">{g.title}</p>
+                <AutoRunner id={g.id} stage={g.stage} />
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {items.length === 0 && generating.length === 0 && (
+        <Card>
+          <CardContent className="py-12 text-center text-gray-400">
+            还没有做完的内容。去选题库点「入队」,几分钟后这里就有。
+          </CardContent>
         </Card>
       )}
 
