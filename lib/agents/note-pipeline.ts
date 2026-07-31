@@ -245,7 +245,9 @@ async function runCritic(item: NoteItem) {
   await prisma.note.update({
     where: { id: note.id },
     data: {
-      criticReport: out as unknown as object,
+      // gatePassed 一并存进去:写稿返工时要靠它分辨"这份报告是打回意见"
+      // 还是"上一版已经过审的存档"
+      criticReport: { ...out, gatePassed } as unknown as object,
       qualityScores: (scores ?? null) as unknown as object,
     },
   })
@@ -270,16 +272,28 @@ async function runCritic(item: NoteItem) {
     return { passed: false, backTo: 'verify', reason: summary, scores: scores?.total }
   }
 
-  // 写作层问题:带着审稿意见重写,留在本阶段复审新版
-  const fresh = await loadNoteItem(item.id)
-  if (fresh) await runNote(fresh, { criticReport: out })
-  return { passed: false, rewritten: true, reason: summary, scores: scores?.total, stayInStage: true }
+  // 写作层问题:回跳到写稿阶段,由下一次调用带着报告重写。
+  // 不在这里内联重写——审稿+重写是两次模型调用,加起来 70-90 秒,
+  // 必超 serverless 的 60 秒上限;函数被杀在重写中途,轮次事件没落库,
+  // 下一次进来会把审稿整个重烧一遍,线上实测就是这样死循环烧钱的
+  return { passed: false, backTo: 'note', reason: summary, scores: scores?.total }
 }
 
 // ── note ──────────────────────────────────────────────────────────────────────
 
 async function runNote(item: NoteItem, qcFeedback?: unknown) {
   const meta = topicMeta(item)
+  // 返工场景(critic/qc 打回后回跳到本阶段):反馈存在上一版笔记上。
+  // 只把"没过关"的报告当反馈——过了审的存档不是意见,喂回去只会让模型困惑
+  if (qcFeedback == null) {
+    const last = item.notes[0]
+    const cr = last?.criticReport as ({ gatePassed?: boolean } & Record<string, unknown>) | null
+    if (last?.status === 'failed_qc' && last.qcReport) {
+      qcFeedback = { 合规终审意见: last.qcReport }
+    } else if (cr && cr.gatePassed === false) {
+      qcFeedback = { 反方审稿意见: cr }
+    }
+  }
   const out = await generateJSON<NoteOutput>({
     system: NOTE_WRITER_SYSTEM,
     user: noteWriterUser(
@@ -371,23 +385,20 @@ async function runQc(item: NoteItem) {
   })
   if (report.passed) return { passed: true }
 
-  // 不通过就退回重写。和视频线一样限次数:一直返工会把钱烧在同一条上
+  // 不通过就打回重写,限次数:一直返工会把钱烧在同一条上
   if (note.version >= MAX_QC_RETRY + 1) {
-    throw new Error(
-      `质检连续不通过 ${note.version} 次,停下等人看:${[
-        ...(report.sourceIssues ?? []),
-        ...(report.complianceIssues ?? []),
-      ]
-        .slice(0, 3)
-        .join(';')}`,
-    )
+    await prisma.contentItem.update({ where: { id: item.id }, data: { stage: 'rejected' } })
+    await prisma.topic.update({ where: { id: item.topicId }, data: { status: 'rejected' } }).catch(() => {})
+    return {
+      rejectedByQc: true,
+      halt: true,
+      reason: [...(report.sourceIssues ?? []), ...(report.complianceIssues ?? [])].slice(0, 3).join(';').slice(0, 200),
+    }
   }
 
-  // 把质检意见带给写稿的那一步。不带的话它不知道上一版哪儿错了,
-  // 只会原样再犯一遍,连着撞满重试次数
-  const fresh = await loadNoteItem(item.id)
-  if (fresh) await runNote(fresh, report)
-  return { passed: false, rewrittenTo: note.version + 1, issues: report, stayInStage: true }
+  // 回跳写稿,由下一次调用带着意见重写(qcReport 已存在笔记上,
+  // runNote 返工时自己会取)。不内联重写,原因同 critic:两次模型调用必超函数上限
+  return { passed: false, backTo: 'note', issues: report }
 }
 
 // ── cards ─────────────────────────────────────────────────────────────────────
