@@ -33,7 +33,25 @@ export function takeLastUsage(): AiUsage {
   return u
 }
 
-async function callOnce(system: string, user: string, maxTokens: number): Promise<string> {
+/**
+ * 只重试"瞬时"失败:529 过载 / 429 限流。它们失败在毫秒级、重试大概率就好;
+ * 其他错误(400/401/内容问题)重试没有意义。上限两次,间隔给足——
+ * Anthropic 过载时连着敲只会继续 529。
+ */
+async function callOnce(system: string, user: string, maxTokens: number, attempt = 0): Promise<string> {
+  try {
+    return await callOnceInner(system, user, maxTokens)
+  } catch (e) {
+    const msg = String(e)
+    if (attempt < 2 && /529|overloaded|429|rate.?limit/i.test(msg)) {
+      await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)))
+      return callOnce(system, user, maxTokens, attempt + 1)
+    }
+    throw e
+  }
+}
+
+async function callOnceInner(system: string, user: string, maxTokens: number): Promise<string> {
   const res = await client().messages.create({
     model: DEFAULT_MODEL,
     max_tokens: maxTokens,
