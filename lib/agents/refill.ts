@@ -2,7 +2,7 @@ import { prisma } from '../prisma'
 import { generateJSONWithSearch } from '../ai'
 import { REFILL_SYSTEM, refillUser } from '../prompts/note'
 import { fingerprintUrl } from '../sources/fetch'
-import { NOTE_CATEGORIES } from '../domain'
+import { NOTE_CATEGORIES, TOPIC_GATE } from '../domain'
 import { logEvent } from './events'
 
 /**
@@ -26,6 +26,7 @@ interface RefillPick {
   source_url: string
   published_at?: string
   facts?: string[]
+  scores?: { total?: number } & Record<string, number | undefined>
 }
 
 export async function refillTopics(count = 4) {
@@ -52,6 +53,10 @@ export async function refillTopics(count = 4) {
     for (const p of picks) {
       if (!p.title_top || !p.title_bottom || !p.source_url) {
         skipped.push(`缺字段:${(p.note_title ?? '').slice(0, 30)}`)
+        continue
+      }
+      if (p.scores?.total != null && p.scores.total < TOPIC_GATE) {
+        skipped.push(`${p.title_top}:${p.scores.total} 分低于门槛`)
         continue
       }
       // 摘要 = 角度 + 挖到的事实。下游核实吃的就是这段,事实必须落进去
@@ -87,8 +92,8 @@ export async function refillTopics(count = 4) {
           source: 'web_search',
           sourceItemId: sourceItem.id,
           status: 'scored',
-          // 搜来的没有源权重,给个中上的固定分:模型已经按两道杠筛过一轮
-          scoreTotal: 75,
+          scoreTotal: p.scores?.total ?? 75,
+          scores: (p.scores ?? undefined) as object | undefined,
           notes: JSON.stringify({
             titleTop: p.title_top,
             titleBottom: p.title_bottom,

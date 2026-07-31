@@ -30,7 +30,13 @@ export type Stage = (typeof STAGES)[number]
  * note  = 写整条笔记(封面两行标题 + 内页卡片 + 正文 + 话题标签)
  * cards = 出配图 + 把每张卡片渲染成 PNG
  */
-export const NOTE_STAGES = ['research', 'note', 'qc', 'cards', 'awaiting_approval'] as const
+/**
+ * 序列本身就是制衡链:核实的人不写稿,写稿的人不审自己,审稿的人不改稿。
+ *   research 拉料 → verify 逐条定级(证据核查) → note 写稿(只能用过审的料)
+ *   → critic 反方审稿(专职推翻) → qc 合规终审 → cards 出图
+ * 程序控制推进,任何一关不过都进不了下一关(失败关闭,不是失败后猜测)。
+ */
+export const NOTE_STAGES = ['research', 'verify', 'note', 'critic', 'qc', 'cards', 'awaiting_approval'] as const
 export type NoteStage = (typeof NOTE_STAGES)[number]
 
 export const STAGES_BY_KIND: Record<ItemKind, readonly string[]> = {
@@ -48,14 +54,16 @@ export function nextStage(kind: string, stage: string): string | null {
 
 export const STAGE_LABELS: Record<string, string> = {
   research: '资料研究',
+  verify: '事实核查',
   note: '写笔记',
+  critic: '反方审稿',
   cards: '卡片图',
   script: '脚本',
   storyboard: '分镜',
   assets: '图片资产',
   voiceover: '配音',
   compose: '合成',
-  qc: '质检',
+  qc: '合规终审',
   awaiting_approval: '待审批',
   approved: '已批准',
   rejected: '已拒绝',
@@ -345,3 +353,101 @@ export interface NoteQcReport {
   sourceIssues: string[]
   notes: string
 }
+
+// ── 证据分级与质量门槛(按研发提示词) ─────────────────────────────────────────
+
+/**
+ * 主张的证据等级。核实 Agent 给每条主张定级,写稿只能把前两档当核心论点。
+ * unverified_claim 不得出现在标题和核心结论里;conflicting_sources 必须
+ * 呈现为「存在争议」,不许挑一个更顺手的版本。
+ */
+export const CLAIM_STATUSES = [
+  'verified_fact',
+  'supported_inference',
+  'expert_opinion',
+  'anecdotal_evidence',
+  'unverified_claim',
+  'outdated',
+  'conflicting_sources',
+] as const
+export type ClaimStatus = (typeof CLAIM_STATUSES)[number]
+
+export const CLAIM_STATUS_LABELS: Record<ClaimStatus, string> = {
+  verified_fact: '已证实',
+  supported_inference: '合理推断',
+  expert_opinion: '专家观点',
+  anecdotal_evidence: '个别经验',
+  unverified_claim: '未证实',
+  outdated: '可能过期',
+  conflicting_sources: '来源冲突',
+}
+
+/** 一条主张及它的证据映射(ClaimEvidenceMap 的元素) */
+export interface ClaimEvidence {
+  id: string
+  text: string
+  type: 'fact' | 'inference' | 'opinion' | 'anecdote'
+  status: ClaimStatus
+  confidence: number
+  source: string
+  /** 适用地区(联邦/某州/某市)。法规类必填,写稿时不得跨范围推广 */
+  jurisdiction?: string
+  /** 时效(生效日期/statistics 的统计时点) */
+  timeLimit?: string
+  note?: string
+}
+
+/** 反方审稿的产出 */
+export interface CriticReport {
+  fatal: string[]
+  major: string[]
+  minor: string[]
+  needsEvidence: string[]
+  deleteSuggestions: string[]
+  allowPublish: boolean
+  /** 致命问题是否出在事实层(是→退回核实重走,不是改措辞能救的) */
+  factLevelProblem: boolean
+  confidence: number
+}
+
+/**
+ * 百分制质量分。维度和权重照研发提示词:
+ * 事实准确性20 实操价值20 北美适用性15 新颖10 逻辑10 视觉表达10 收藏5 转发5 可信5
+ */
+export interface QualityScores {
+  factAccuracy: number
+  practicalValue: number
+  naFit: number
+  novelty: number
+  logic: number
+  visual: number
+  saveValue: number
+  shareValue: number
+  trust: number
+  total: number
+}
+
+/** 发布门槛:任何一条不满足都不得进入待审批 */
+export const QUALITY_GATE = {
+  total: 85,
+  factAccuracy: 18,
+  practicalValue: 16,
+} as const
+
+/** 选题门槛(九维评分总分,低于它不进池) */
+export const TOPIC_GATE = 75
+
+/** 选题九维(用户痛点20 实操15 北美15 新颖10 证据15 收藏10 转发5 视觉5 空白5) */
+export interface TopicDims {
+  painPoint: number
+  practical: number
+  naRelevance: number
+  novelty: number
+  evidence: number
+  saveValue: number
+  shareValue: number
+  visualPotential: number
+  contentGap: number
+  total: number
+}
+

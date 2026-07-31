@@ -2,6 +2,7 @@ import { prisma } from '../prisma'
 import { generateJSON } from '../ai'
 import { NOTE_TOPIC_SYSTEM, noteTopicUser } from '../prompts/note'
 import { logEvent } from './events'
+import { TOPIC_GATE } from '../domain'
 
 /**
  * 图文选题:从今天采到的素材里挑,不再凭空生成。
@@ -23,6 +24,7 @@ interface PickedTopic {
   angle: string
   category: string
   why_now?: string
+  scores?: { total?: number } & Record<string, number | undefined>
 }
 
 export async function pickNoteTopics(count = 5) {
@@ -52,7 +54,7 @@ export async function pickNoteTopics(count = 5) {
       .slice(0, CANDIDATE_POOL)
 
     const recent = await prisma.topic.findMany({
-      where: { source: 'source_item' },
+      where: { source: { in: ['source_item', 'web_search'] } },
       orderBy: { createdAt: 'desc' },
       take: 60,
       select: { title: true },
@@ -103,6 +105,12 @@ export async function pickNoteTopics(count = 5) {
         skipped.push(`下标 ${p.sourceIndex} 对不上素材`)
         continue
       }
+      // 门槛在程序侧再守一次:提示词说了"低于 75 不要输出",但门槛必须
+      // 长在代码里——提示词是请求,代码才是规则
+      if (p.scores?.total != null && p.scores.total < TOPIC_GATE) {
+        skipped.push(`${p.title_top}:${p.scores.total} 分低于门槛 ${TOPIC_GATE}`)
+        continue
+      }
       const title = `${p.title_top} / ${p.title_bottom}`
       await prisma.topic.create({
         data: {
@@ -113,8 +121,8 @@ export async function pickNoteTopics(count = 5) {
           source: 'source_item',
           sourceItemId: src.id,
           status: 'scored',
-          // 用源权重当基础分:政府和协会的素材天然更可信,不用再让模型自评一遍
-          scoreTotal: (src.feed?.weight ?? 50) + (CATEGORY_BONUS[src.category] ?? 0),
+          scoreTotal: p.scores?.total ?? (src.feed?.weight ?? 50) + (CATEGORY_BONUS[src.category] ?? 0),
+          scores: (p.scores ?? undefined) as object | undefined,
           notes: JSON.stringify({
             titleTop: p.title_top,
             titleBottom: p.title_bottom,
@@ -140,7 +148,8 @@ export async function pickNoteTopics(count = 5) {
 /** 把选题排进生产。图文的第一个阶段是 research */
 export async function queueNoteTopics(limit = 3) {
   const topics = await prisma.topic.findMany({
-    where: { status: 'scored', source: 'source_item' },
+    // 补题(web_search)产的选题和采集产的同等待遇,不然自动排产永远轮不到它们
+    where: { status: 'scored', source: { in: ['source_item', 'web_search'] } },
     orderBy: [{ scoreTotal: 'desc' }, { createdAt: 'desc' }],
     take: limit,
   })

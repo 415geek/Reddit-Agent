@@ -8,7 +8,7 @@ import { ApprovalActions } from './approval-actions'
 import { AssetPreview } from './asset-preview'
 import { NotePreview } from './note-preview'
 import { AutoRunner } from '../production/auto-runner'
-import { NOTE_STAGES } from '@/lib/domain'
+import { CLAIM_STATUS_LABELS, ClaimEvidence, NOTE_STAGES, QualityScores } from '@/lib/domain'
 
 const BEAT_LABELS: Array<[keyof ScriptBeats, string]> = [
   ['hook', '0-3秒 · 反常识钩子'],
@@ -109,12 +109,80 @@ export default async function ApprovalsPage() {
                     hashtags={note.hashtags}
                   />
                 )}
+                {(() => {
+                  const qs = note?.qualityScores as QualityScores | null
+                  if (!qs) return null
+                  return (
+                    <div className="flex flex-wrap gap-1.5 text-xs">
+                      <Badge variant="default">质量 {qs.total}/100</Badge>
+                      <Badge variant="none">事实 {qs.factAccuracy}/20</Badge>
+                      <Badge variant="none">实操 {qs.practicalValue}/20</Badge>
+                      <Badge variant="none">北美 {qs.naFit}/15</Badge>
+                      <Badge variant="none">逻辑 {qs.logic}/10</Badge>
+                    </div>
+                  )
+                })()}
                 {noteQc?.notes && (
                   <div className="rounded-md bg-green-50 border border-green-200 p-3">
-                    <p className="text-xs font-semibold text-green-700">质检意见</p>
+                    <p className="text-xs font-semibold text-green-700">合规终审意见</p>
                     <p className="text-sm text-green-800 mt-0.5">{noteQc.notes}</p>
                   </div>
                 )}
+                {(() => {
+                  const claims = (item.research?.claims ?? []) as unknown as ClaimEvidence[]
+                  if (!claims.length) return null
+                  const tone: Record<string, string> = {
+                    verified_fact: 'text-green-700 bg-green-50 border-green-200',
+                    supported_inference: 'text-blue-700 bg-blue-50 border-blue-200',
+                    expert_opinion: 'text-gray-600 bg-gray-50 border-gray-200',
+                    anecdotal_evidence: 'text-amber-700 bg-amber-50 border-amber-200',
+                    unverified_claim: 'text-red-700 bg-red-50 border-red-200',
+                    outdated: 'text-red-700 bg-red-50 border-red-200',
+                    conflicting_sources: 'text-red-700 bg-red-50 border-red-200',
+                  }
+                  return (
+                    <details className="text-sm">
+                      <summary className="cursor-pointer text-gray-500">
+                        证据链({claims.length} 条主张,逐条已定级)
+                      </summary>
+                      <div className="mt-2 space-y-1.5">
+                        {claims.map((c) => (
+                          <div key={c.id} className="text-xs flex gap-2 items-start">
+                            <span
+                              className={`shrink-0 rounded border px-1.5 py-0.5 ${tone[c.status] ?? tone.expert_opinion}`}
+                            >
+                              {CLAIM_STATUS_LABELS[c.status] ?? c.status}
+                            </span>
+                            <span className="text-gray-700">
+                              {c.text}
+                              <span className="text-gray-400">
+                                {' '}
+                                — {c.source}
+                                {c.jurisdiction ? ` · ${c.jurisdiction}` : ''}
+                                {c.timeLimit ? ` · ${c.timeLimit}` : ''}
+                              </span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )
+                })()}
+                {(() => {
+                  const cr = note?.criticReport as { fatal?: string[]; major?: string[]; minor?: string[] } | null
+                  const issues = [...(cr?.major ?? []), ...(cr?.minor ?? [])]
+                  if (!cr || !issues.length) return null
+                  return (
+                    <details className="text-sm">
+                      <summary className="cursor-pointer text-gray-500">反方审稿(已处理,存档备查)</summary>
+                      <div className="mt-2 space-y-1 text-xs text-gray-600">
+                        {issues.map((x, i) => (
+                          <p key={i}>· {x}</p>
+                        ))}
+                      </div>
+                    </details>
+                  )
+                })()}
                 {item.topic.sourceItem && (
                   <p className="text-xs text-gray-400">
                     素材来源:

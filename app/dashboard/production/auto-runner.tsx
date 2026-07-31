@@ -31,18 +31,22 @@ function describe(out: AdvanceOut): string {
   const d = out.detail ?? {}
   if (d.rewrittenTo) return `质检打回,重写第 ${d.rewrittenTo} 版`
   if (d.total != null) return `出图渲卡 ${d.done ?? 0}/${d.total}`
-  if (out.stage === 'note') return '核实完成,写稿中'
-  if (out.stage === 'qc') return '稿子写完,质检中'
-  if (out.stage === 'cards') return '质检通过,出图中'
+  if (out.stage === 'verify') return '逐条核查证据中'
+  if (out.stage === 'note') return '证据过关,写稿中'
+  if (out.stage === 'critic') return '反方审稿中'
+  if (out.stage === 'qc') return '合规终审中'
+  if (out.stage === 'cards') return '过审,出图中'
   return '推进中'
 }
 
 export function AutoRunner({ id, stage }: { id: string; stage: string }) {
   const router = useRouter()
   const [progress, setProgress] = useState(() => {
-    if (stage === 'research') return '核实素材中'
+    if (stage === 'research') return '挖素材中'
+    if (stage === 'verify') return '证据核查中'
     if (stage === 'note') return '写稿中'
-    if (stage === 'qc') return '质检中'
+    if (stage === 'critic') return '反方审稿中'
+    if (stage === 'qc') return '合规终审中'
     if (stage === 'cards') return '出图渲卡中'
     return '推进中'
   })

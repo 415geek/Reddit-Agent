@@ -21,6 +21,18 @@ function stripFences(text: string) {
     .trim()
 }
 
+/** 最近一次调用的 token 用量。单实例内串行调用,读完即取走 */
+export interface AiUsage {
+  inputTokens: number
+  outputTokens: number
+}
+let _lastUsage: AiUsage = { inputTokens: 0, outputTokens: 0 }
+export function takeLastUsage(): AiUsage {
+  const u = _lastUsage
+  _lastUsage = { inputTokens: 0, outputTokens: 0 }
+  return u
+}
+
 async function callOnce(system: string, user: string, maxTokens: number): Promise<string> {
   const res = await client().messages.create({
     model: DEFAULT_MODEL,
@@ -32,6 +44,10 @@ async function callOnce(system: string, user: string, maxTokens: number): Promis
     system,
     messages: [{ role: 'user', content: user }],
   })
+  _lastUsage = {
+    inputTokens: (res.usage?.input_tokens ?? 0) + _lastUsage.inputTokens,
+    outputTokens: (res.usage?.output_tokens ?? 0) + _lastUsage.outputTokens,
+  }
   const block = res.content.find((b) => b.type === 'text')
   if (!block || block.type !== 'text') throw new Error('AI 返回中没有文本内容')
   return block.text

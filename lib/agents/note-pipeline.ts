@@ -1,22 +1,30 @@
 import { prisma } from '../prisma'
-import { generateJSON } from '../ai'
+import { generateJSON, takeLastUsage } from '../ai'
 import {
+  ClaimEvidence,
+  CriticReport,
   NOTE_CARD_MAX,
   NOTE_CARD_MIN,
   NOTE_STAGES,
   NoteCard,
   NoteOutput,
   NoteQcReport,
+  QUALITY_GATE,
+  QualityScores,
   ResearchOutput,
   imageStylePrompt,
   nextStage,
 } from '../domain'
 import {
+  NOTE_CRITIC_SYSTEM,
   NOTE_QC_SYSTEM,
   NOTE_RESEARCH_SYSTEM,
+  NOTE_VERIFY_SYSTEM,
   NOTE_WRITER_SYSTEM,
+  noteCriticUser,
   noteQcUser,
   noteResearchUser,
+  noteVerifyUser,
   noteWriterUser,
 } from '../prompts/note'
 import { getMediaProviders, providerLabels } from '../providers'
@@ -132,6 +140,142 @@ async function runResearch(item: NoteItem) {
   return { facts: out.supporting_facts?.length ?? 0, actions: out.action_items?.length ?? 0 }
 }
 
+// ── verify:证据核查(独立于挖料和写稿) ──────────────────────────────────────
+
+interface VerifyOutput {
+  claims: ClaimEvidence[]
+  core_claim_id?: string
+  verdict: 'pass' | 'degraded' | 'fail'
+  degraded_scope?: string
+  blockers?: string[]
+}
+
+async function runVerify(item: NoteItem) {
+  if (!item.research) throw new Error('没有研究材料,无法核查')
+  const out = await generateJSON<VerifyOutput>({
+    system: NOTE_VERIFY_SYSTEM,
+    user: noteVerifyUser(item.research, sourcePayload(item)),
+    maxTokens: 4096,
+    mockKey: 'note.verify',
+  })
+
+  const claims = out.claims ?? []
+  await prisma.research.update({
+    where: { contentItemId: item.id },
+    data: {
+      claims: claims as unknown as object,
+      // 降级口径写回 riskNotes,写稿的输入里自然带上
+      ...(out.verdict === 'degraded' && out.degraded_scope
+        ? {
+            // 先滤掉旧的降级行再追加:critic 退回 verify 重核时这里会再跑一遍,
+            // 不滤的话每回跳一次就叠一条,写稿输入越滚越长
+            riskNotes: [
+              ...(((item.research.riskNotes as string[] | null) ?? []).filter(
+                (r) => typeof r !== 'string' || !r.startsWith('【核查降级】'),
+              )),
+              `【核查降级】全文必须按此口径:${out.degraded_scope}`,
+            ] as unknown as object,
+          }
+        : {}),
+    },
+  })
+
+  // 失败关闭:核心主张站不住,这条不做。抛错让熔断和看板接手,
+  // 不许"先写着,写完再说"——那就是幻觉的生产流程
+  if (out.verdict === 'fail') {
+    throw new Error(`核查不通过,选题不能做:${(out.blockers ?? []).join(';').slice(0, 200) || '核心主张无法证实'}`)
+  }
+
+  const counts = claims.reduce<Record<string, number>>((m, c) => ((m[c.status] = (m[c.status] ?? 0) + 1), m), {})
+  return { verdict: out.verdict, claims: claims.length, byStatus: counts }
+}
+
+// ── critic:反方审稿(专职推翻) ─────────────────────────────────────────────
+
+/** 反方审稿最多打回几轮。事实层问题退回核查,写作层问题退回重写,各占额度 */
+const MAX_CRITIC_ROUNDS = Number(process.env.NOTE_CRITIC_MAX_ROUNDS || 2)
+
+interface CriticOutput extends CriticReport {
+  scores: QualityScores
+}
+
+async function runCritic(item: NoteItem) {
+  const note = item.notes[0]
+  if (!note) throw new Error('还没有稿子,无法审')
+
+  // 额度先查,再花钱。额度用完的条目不该每次重试都白烧一次审稿调用,
+  // 也不该永远卡在生产队列里——直接打成 rejected,人从「已拒绝」里看原因。
+  // 这就是"停下等人看"的落地形态:停是真的停,原因摆在明面上
+  const spentRounds = await prisma.pipelineEvent.count({
+    where: { contentItemId: item.id, stage: 'critic', status: 'succeeded' },
+  })
+  if (spentRounds > MAX_CRITIC_ROUNDS) {
+    const lastReport = note.criticReport as { fatal?: string[]; major?: string[] } | null
+    const why = [...(lastReport?.fatal ?? []), ...(lastReport?.major ?? [])].slice(0, 2).join(';').slice(0, 200)
+    await prisma.contentItem.update({ where: { id: item.id }, data: { stage: 'rejected' } })
+    await prisma.topic.update({ where: { id: item.topicId }, data: { status: 'rejected' } }).catch(() => {})
+    return { rejectedByCritic: true, halt: true, reason: why || '多轮审稿未达标' }
+  }
+
+  const out = await generateJSON<CriticOutput>({
+    system: NOTE_CRITIC_SYSTEM,
+    user: noteCriticUser(
+      {
+        titles: { top: note.titleTop, bottom: note.titleBottom, feed: note.noteTitle },
+        summary: note.summary,
+        cards: note.cards,
+        bodyText: note.bodyText,
+        sources: note.sources,
+      },
+      item.research?.claims ?? [],
+      { coreClaim: item.research?.coreClaim, riskNotes: item.research?.riskNotes },
+    ),
+    maxTokens: 4096,
+    mockKey: 'note.critic',
+  })
+
+  const scores = out.scores
+  const gatePassed =
+    out.allowPublish &&
+    (out.fatal ?? []).length === 0 &&
+    (scores?.total ?? 0) >= QUALITY_GATE.total &&
+    (scores?.factAccuracy ?? 0) >= QUALITY_GATE.factAccuracy &&
+    (scores?.practicalValue ?? 0) >= QUALITY_GATE.practicalValue
+
+  await prisma.note.update({
+    where: { id: note.id },
+    data: {
+      criticReport: out as unknown as object,
+      qualityScores: (scores ?? null) as unknown as object,
+    },
+  })
+
+  if (gatePassed) {
+    return { passed: true, total: scores?.total, fact: scores?.factAccuracy, practical: scores?.practicalValue }
+  }
+
+  const summary = [...(out.fatal ?? []), ...(out.major ?? [])].slice(0, 3).join(';').slice(0, 250)
+  if (spentRounds >= MAX_CRITIC_ROUNDS) {
+    // 这是最后一轮,仍不达标:停产。不抛错——抛错会被当成"临时故障"进重试循环,
+    // 而这是终审结论,要的是落停,不是重试
+    await prisma.contentItem.update({ where: { id: item.id }, data: { stage: 'rejected' } })
+    await prisma.topic.update({ where: { id: item.topicId }, data: { status: 'rejected' } }).catch(() => {})
+    return { rejectedByCritic: true, halt: true, total: scores?.total, reason: summary }
+  }
+
+  // 事实层的致命问题:退回核查重走,不是改措辞能救的。
+  // 研发提示词的原话:「如果发现事实错误,必须退回事实核查或研究阶段,
+  // 不能只让写作 Agent 修改措辞」
+  if (out.factLevelProblem) {
+    return { passed: false, backTo: 'verify', reason: summary, scores: scores?.total }
+  }
+
+  // 写作层问题:带着审稿意见重写,留在本阶段复审新版
+  const fresh = await loadNoteItem(item.id)
+  if (fresh) await runNote(fresh, { criticReport: out })
+  return { passed: false, rewritten: true, reason: summary, scores: scores?.total, stayInStage: true }
+}
+
 // ── note ──────────────────────────────────────────────────────────────────────
 
 async function runNote(item: NoteItem, qcFeedback?: unknown) {
@@ -149,6 +293,7 @@ async function runNote(item: NoteItem, qcFeedback?: unknown) {
       item.research,
       sourcePayload(item),
       qcFeedback,
+      item.research?.claims ?? [],
     ),
     maxTokens: 8192,
     mockKey: 'note.write',
@@ -338,7 +483,9 @@ type Handler = (item: NoteItem, budgetMs?: number) => Promise<Record<string, unk
 
 const HANDLERS: Record<string, Handler> = {
   research: runResearch,
+  verify: runVerify,
   note: runNote,
+  critic: runCritic,
   qc: runQc,
   cards: runCards,
 }
@@ -354,7 +501,30 @@ export async function advanceNoteItem(itemId: string, opts: { budgetMs?: number 
 
   await logEvent({ contentItemId: itemId, stage, status: 'started' })
   try {
+    takeLastUsage() // 清零,只统计本阶段
     const detail = await HANDLERS[stage](item, opts.budgetMs)
+    const usage = takeLastUsage()
+    if (usage.inputTokens || usage.outputTokens) {
+      detail.tokens = { in: usage.inputTokens, out: usage.outputTokens }
+    }
+
+    // 终审否决:handler 已把条目落到终态(rejected),推进逻辑一步都不能再走。
+    // 没有这一道,被判死的稿子会照常走完 qc→cards 进待审批——上线前的端到端
+    // 实测真的发生了:69 分的稿子被判死后又完整走完了生产线。失败必须关闭。
+    if (detail.halt) {
+      await logEvent({ contentItemId: itemId, stage, status: 'succeeded', detail })
+      return { itemId, stage: 'rejected', done: true, detail }
+    }
+
+    // 反方审稿发现事实层问题:退回指定阶段重走(研发提示词的硬要求)
+    if (typeof detail.backTo === 'string') {
+      await prisma.contentItem.update({
+        where: { id: itemId },
+        data: { stage: detail.backTo, stageEnteredAt: new Date() },
+      })
+      await logEvent({ contentItemId: itemId, stage, status: 'succeeded', detail })
+      return { itemId, stage: detail.backTo, done: false, retried: true, detail }
+    }
 
     if (detail.stayInStage) {
       await prisma.contentItem.update({ where: { id: itemId }, data: { stageEnteredAt: new Date() } })

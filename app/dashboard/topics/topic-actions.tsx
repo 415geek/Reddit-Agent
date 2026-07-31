@@ -43,9 +43,11 @@ function describe(out: AdvanceOut): string {
   if (out.stage === 'awaiting_approval') return '完成'
   if (d.rewrittenTo) return `质检打回,重写第 ${d.rewrittenTo} 版`
   if (d.total != null) return `出图渲卡 ${d.done ?? 0}/${d.total}`
-  if (out.stage === 'note') return '核实完成,写稿中'
-  if (out.stage === 'qc') return '稿子写完,质检中'
-  if (out.stage === 'cards') return '质检通过,出图中'
+  if (out.stage === 'verify') return '逐条核查证据中'
+  if (out.stage === 'note') return '证据过关,写稿中'
+  if (out.stage === 'critic') return '反方审稿中'
+  if (out.stage === 'qc') return '合规终审中'
+  if (out.stage === 'cards') return '过审,出图中'
   return out.stage ?? '推进中'
 }
 

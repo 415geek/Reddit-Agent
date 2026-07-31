@@ -35,7 +35,7 @@ async function main() {
   console.log(`  排产:${items[0].title}`)
 
   console.log('\n── 推进')
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 18; i++) {
     const before = await prisma.contentItem.findUnique({ where: { id: itemId }, select: { stage: true } })
     if (!before || before.stage === 'awaiting_approval') break
     const out = await advanceNoteItem(itemId, { budgetMs: 240_000 })

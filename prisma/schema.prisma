@@ -178,6 +178,10 @@ model Note {
   sources   Json     @default("[]")
 
   qcReport  Json?
+  /// 反方审稿报告:致命/主要/次要问题、是否放行
+  criticReport Json?
+  /// 百分制质量分(事实20/实操20/北美15/新颖10/逻辑10/视觉10/收藏5/转发5/可信5)
+  qualityScores Json?
   status    String   @default("draft") // draft | passed_qc | failed_qc
   createdAt DateTime @default(now())
 
@@ -199,6 +203,11 @@ model Research {
   usableExamples   Json     @default("[]")
   raw              String?  @db.Text
   createdAt        DateTime @default(now())
+
+  /// ClaimEvidenceMap:核实产出的主张清单,每条带 verified_fact|supported_inference|
+  /// expert_opinion|anecdotal_evidence|unverified_claim|outdated|conflicting_sources 标记。
+  /// 写稿只能把前两档当核心论点;人工审批界面按这个渲染"每句话对应哪条来源"
+  claims Json @default("[]")
 
   contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
 
