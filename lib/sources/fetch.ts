@@ -60,10 +60,22 @@ const NAMED_ENTITIES: Record<string, string> = {
 }
 
 export function decodeEntities(s: string): string {
-  return s
-    .replace(/&#(\d+);/g, (_m, n) => String.fromCodePoint(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_m, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&([a-z]+);/gi, (m, name) => NAMED_ENTITIES[name.toLowerCase()] ?? m)
+  return (
+    s
+      .replace(/&#(\d+);/g, (_m, n) => safeCodePoint(Number(n)))
+      .replace(/&#x([0-9a-f]+);/gi, (_m, h) => safeCodePoint(parseInt(h, 16)))
+      .replace(/&([a-z]+);/gi, (m, name) => NAMED_ENTITIES[name.toLowerCase()] ?? m)
+      // 剥掉 NUL 和其他控制字符(保留换行/制表)。线上真的抓到过带 0x00 的网页——
+      // Postgres 的 TEXT 拒收 0x00,rawText 写库直接炸,而且因为没存成,
+      // 每次重试都重新抓、重新撞同一堵墙,条目就永远卡在挖素材
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+  )
+}
+
+function safeCodePoint(n: number): string {
+  // &#0; 会解码成 NUL;非法码点会让 fromCodePoint 抛错。两种都不值得留
+  if (!Number.isFinite(n) || n <= 0 || n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff)) return ''
+  return String.fromCodePoint(n)
 }
 
 function parseDate(v: unknown): Date | null {
