@@ -8,7 +8,7 @@ import { ApprovalActions } from './approval-actions'
 import { AssetPreview } from './asset-preview'
 import { NotePreview } from './note-preview'
 import { AutoRunner } from '../production/auto-runner'
-import { CLAIM_STATUS_LABELS, ClaimEvidence, NOTE_STAGES, QualityScores } from '@/lib/domain'
+import { CLAIM_STATUS_LABELS, ClaimEvidence, NOTE_STAGES, QUALITY_GATE, QualityScores } from '@/lib/domain'
 
 const BEAT_LABELS: Array<[keyof ScriptBeats, string]> = [
   ['hook', '0-3秒 · 反常识钩子'],
@@ -21,9 +21,11 @@ const BEAT_LABELS: Array<[keyof ScriptBeats, string]> = [
 
 export default async function ApprovalsPage() {
   const inFlightStages = NOTE_STAGES.filter((st) => st !== 'awaiting_approval') as string[]
-  const [items, generating] = await Promise.all([
+  const [rawItems, generating, rejected] = await Promise.all([
+    // 待审批和已通过都摆在这页:通过之后老板常回来再复制一次标题、再存一遍图,
+    // 通过就消失的话他会以为稿子丢了(真的发生过,截图来问"生产完的找不到")
     prisma.contentItem.findMany({
-      where: { stage: 'awaiting_approval' },
+      where: { stage: { in: ['awaiting_approval', 'approved'] } },
       include: {
         topic: { include: { series: true, sourceItem: true } },
         research: true,
@@ -33,6 +35,7 @@ export default async function ApprovalsPage() {
         assets: true,
       },
       orderBy: { stageEnteredAt: 'desc' },
+      take: 30,
     }),
     // 生成中的也摆在这一页顶上:老板只认识两个页面,进度就得在他看的地方。
     // AutoRunner 顺便接管推进——打开这页,没跑完的会继续跑
@@ -41,7 +44,24 @@ export default async function ApprovalsPage() {
       select: { id: true, title: true, stage: true },
       orderBy: { stageEnteredAt: 'asc' },
     }),
+    // 被反方审稿/合规终审毙掉的:必须留在明面上。生产完"消失"是最伤信任的形态——
+    // 老板看着状态跑完了却哪儿都找不到稿子。毙了就亮出来,附上审稿理由和分数
+    prisma.contentItem.findMany({
+      where: { kind: 'note', stage: 'rejected' },
+      include: {
+        topic: { include: { sourceItem: true } },
+        // 取两版:最新版可能刚重写完还没来得及审(报告是空的),理由在上一版身上
+        notes: { orderBy: { version: 'desc' }, take: 2 },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 15,
+    }),
   ])
+  // 待审批的排前面(那是要动手的),已通过的跟在后面(随时回来复制)
+  const items = [
+    ...rawItems.filter((i) => i.stage === 'awaiting_approval'),
+    ...rawItems.filter((i) => i.stage === 'approved'),
+  ]
 
   return (
     <div className="space-y-6">
@@ -65,10 +85,18 @@ export default async function ApprovalsPage() {
         </Card>
       )}
 
-      {items.length === 0 && generating.length === 0 && (
+      {items.length === 0 && generating.length === 0 && rejected.length === 0 && (
         <Card>
           <CardContent className="py-12 text-center text-gray-400">
             还没有做完的内容。去选题库点「入队」,几分钟后这里就有。
+          </CardContent>
+        </Card>
+      )}
+      {items.length === 0 && generating.length === 0 && rejected.length > 0 && (
+        <Card>
+          <CardContent className="py-8 text-center text-gray-500 text-sm">
+            最近生产的稿子都没过反方审稿,被毙的原因在下面「没过审的稿子」里逐条可查。
+            去选题库再选一条,或点「补题」换一批新选题。
           </CardContent>
         </Card>
       )}
@@ -96,7 +124,7 @@ export default async function ApprovalsPage() {
                       {item.topic.sourceItem && <Badge variant="outline">{item.topic.sourceItem.source}</Badge>}
                     </div>
                   </div>
-                  <ApprovalActions id={item.id} />
+                  <ApprovalActions id={item.id} stage={item.stage} />
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -214,7 +242,7 @@ export default async function ApprovalsPage() {
                     <Badge variant="none">{shots.length}镜头 / {shots.filter((s) => s.type === 'motion').length}动态</Badge>
                   </div>
                 </div>
-                <ApprovalActions id={item.id} />
+                <ApprovalActions id={item.id} stage={item.stage} />
               </div>
             </CardHeader>
             <CardContent>
@@ -286,6 +314,55 @@ export default async function ApprovalsPage() {
           </Card>
         )
       })}
+
+      {rejected.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base text-gray-700">没过审的稿子({rejected.length})</CardTitle>
+            <p className="text-xs text-gray-400 mt-1">
+              反方审稿或合规终审没放行的,不会发布。理由摆在这儿,不白白消失。
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {rejected.map((r) => {
+              // 最新版可能刚重写完还没审(报告为空),真正的毙稿理由在审过的那一版上
+              const judged = r.notes.find((n) => n.criticReport != null) ?? r.notes[0]
+              const cr = judged?.criticReport as { fatal?: string[]; major?: string[] } | null
+              const qs = judged?.qualityScores as QualityScores | null
+              const qc = judged?.qcReport as { sourceIssues?: string[]; complianceIssues?: string[] } | null
+              const reasons = [
+                ...(cr?.fatal ?? []),
+                ...(cr?.major ?? []),
+                ...(qc?.sourceIssues ?? []),
+                ...(qc?.complianceIssues ?? []),
+              ].slice(0, 3)
+              return (
+                <details key={r.id} className="rounded-md border border-gray-200 p-3">
+                  <summary className="cursor-pointer text-sm text-gray-700 flex items-center gap-2 flex-wrap">
+                    <span className="font-medium">{r.title}</span>
+                    {qs?.total != null && <Badge variant="none">审稿 {qs.total} 分,门槛 {QUALITY_GATE.total}</Badge>}
+                  </summary>
+                  <div className="mt-2 space-y-1 text-xs text-gray-600">
+                    {reasons.length ? (
+                      reasons.map((x, i) => <p key={i}>· {x}</p>)
+                    ) : (
+                      <p>· 多轮重写后仍未达到质量门槛</p>
+                    )}
+                    {r.topic.sourceItem && (
+                      <p className="text-gray-400 pt-1">
+                        素材:
+                        <a className="underline" href={r.topic.sourceItem.url} target="_blank" rel="noreferrer">
+                          {r.topic.sourceItem.title}
+                        </a>
+                      </p>
+                    )}
+                  </div>
+                </details>
+              )
+            })}
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

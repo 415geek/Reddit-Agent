@@ -208,19 +208,16 @@ async function runCritic(item: NoteItem) {
   const note = item.notes[0]
   if (!note) throw new Error('还没有稿子,无法审')
 
-  // 额度先查,再花钱。额度用完的条目不该每次重试都白烧一次审稿调用,
-  // 也不该永远卡在生产队列里——直接打成 rejected,人从「已拒绝」里看原因。
-  // 这就是"停下等人看"的落地形态:停是真的停,原因摆在明面上
-  const spentRounds = await prisma.pipelineEvent.count({
-    where: { contentItemId: item.id, stage: 'critic', status: 'succeeded' },
-  })
-  if (spentRounds > MAX_CRITIC_ROUNDS) {
-    const lastReport = note.criticReport as { fatal?: string[]; major?: string[] } | null
-    const why = [...(lastReport?.fatal ?? []), ...(lastReport?.major ?? [])].slice(0, 2).join(';').slice(0, 200)
-    await prisma.contentItem.update({ where: { id: item.id }, data: { stage: 'rejected' } })
-    await prisma.topic.update({ where: { id: item.topicId }, data: { status: 'rejected' } }).catch(() => {})
-    return { rejectedByCritic: true, halt: true, reason: why || '多轮审稿未达标' }
+  // 幂等:这一版已经审过且过关,直接放行,不重烧一次审稿
+  const prior = note.criticReport as ({ gatePassed?: boolean } & Record<string, unknown>) | null
+  if (prior?.gatePassed === true) {
+    return { passed: true, cached: true }
   }
+
+  // 轮次按稿件版本数,不按事件数:版本有数据库唯一约束,并发双跑写不出重复版本;
+  // 事件数在双跑时会虚高,曾把一条 72→80 分持续进步的稿子在第三版没审的情况下
+  // 直接错杀。规则:每一版都必须被审到,额度管的是"还许不许再重写"
+  const rewrites = note.version - 1
 
   const out = await generateJSON<CriticOutput>({
     system: NOTE_CRITIC_SYSTEM,
@@ -262,9 +259,9 @@ async function runCritic(item: NoteItem) {
   }
 
   const summary = [...(out.fatal ?? []), ...(out.major ?? [])].slice(0, 3).join(';').slice(0, 250)
-  if (spentRounds >= MAX_CRITIC_ROUNDS) {
-    // 这是最后一轮,仍不达标:停产。不抛错——抛错会被当成"临时故障"进重试循环,
-    // 而这是终审结论,要的是落停,不是重试
+  if (rewrites >= MAX_CRITIC_ROUNDS) {
+    // 重写额度用完,最后一版也没达标:停产。不抛错——抛错会被当成"临时故障"
+    // 进重试循环,而这是终审结论,要的是落停,不是重试
     await prisma.contentItem.update({ where: { id: item.id }, data: { stage: 'rejected' } })
     await prisma.topic.update({ where: { id: item.topicId }, data: { status: 'rejected' } }).catch(() => {})
     return { rejectedByCritic: true, halt: true, total: scores?.total, reason: summary }
@@ -514,6 +511,19 @@ export async function advanceNoteItem(itemId: string, opts: { budgetMs?: number 
     return { itemId, stage, done: true, note: '已离开自动流水线(审批/发布阶段)' }
   }
   if (stage === 'awaiting_approval') return { itemId, stage, done: true, note: '等待人工审批' }
+
+  // 抢占再干活:同一条目常被好几方同时推(入队页的循环、已完成页的 AutoRunner、
+  // 整点心跳),用 stageEnteredAt 做一次条件更新当乐观锁——改到的才有资格跑,
+  // 没抢到的直接让路。不加这道,同一版稿子会被并发审两遍、轮次记数虚高,
+  // 第三版没审就被"额度用尽"错杀(线上事件流水里真实发生过:同一分钟里
+  // 两个 critic 调用先后开跑,一轮审稿记成两轮)
+  const claimed = await prisma.contentItem.updateMany({
+    where: { id: itemId, stage, stageEnteredAt: item.stageEnteredAt },
+    data: { stageEnteredAt: new Date() },
+  })
+  if (claimed.count === 0) {
+    return { itemId, stage, done: false, skipped: true, note: '另一个调用正在推进这条,本次让路' }
+  }
 
   await logEvent({ contentItemId: itemId, stage, status: 'started' })
   try {

@@ -216,6 +216,12 @@ ${NOTE_COMPLIANCE}
 
 **证据使用纪律**(输入里有 claims 证据清单时,这是最高优先级规则):
 - 核心结论、标题、封面 body 只能建立在 verified_fact 和 supported_inference 上
+- **选题标题只是线索,不是圣旨。**选题给的标题里若带具体数字或结论,先到证据清单里
+  找它:不是 verified_fact 或 supported_inference 的,必须换角度重拟标题和封面,
+  用证据里站得住的料做钩子。沿用一个核实不过的数字,整篇会被反方审稿一票否决,
+  重写多少遍都救不回来——弃掉那个数字是唯一活路
+- supported_inference 当钩子或结论用时,句子里要带出推断口吻(「按这个态势」「意味着」),
+  不许写成板上钉钉的既成事实
 - expert_opinion 必须写成「某某认为/预计」,不许写成事实
 - anecdotal_evidence 只能当例子讲,并且写清是个别店的经历,不许推广成规律
 - unverified_claim 和 outdated **一律不写进稿子**,一个字都不用

@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 
-export function ApprovalActions({ id }: { id: string }) {
+export function ApprovalActions({ id, stage }: { id: string; stage?: string }) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
 
@@ -20,6 +20,11 @@ export function ApprovalActions({ id }: { id: string }) {
     } finally {
       setBusy(false)
     }
+  }
+
+  // 已通过的稿子留在页面上供随时复制/存图,不再需要按钮
+  if (stage === 'approved') {
+    return <span className="text-sm text-green-600 font-medium flex-shrink-0">✓ 已通过</span>
   }
 
   return (

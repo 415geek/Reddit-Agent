@@ -22,6 +22,7 @@ interface AdvanceOut {
   ok: boolean
   stage?: string
   done?: boolean
+  skipped?: boolean
   error?: string
   detail?: {
     stayInStage?: boolean
@@ -85,6 +86,17 @@ export function TopicActions({ id, status, className }: { id: string; status: st
           const out = (await r.json()) as AdvanceOut
           if (!out.ok) {
             setError(`出错了:${(out.error ?? '').slice(0, 120)}(cron 稍后会自动重试)`)
+            break
+          }
+          // 别的调用(已完成页、cron)正在推这条:歇口气再看,不空转
+          if (out.skipped) {
+            await new Promise((r) => setTimeout(r, 10_000))
+            continue
+          }
+          // 反方审稿终审毙稿:如实说,别装成"已生成"。理由去已完成页看
+          if (out.stage === 'rejected') {
+            setError('这篇没过反方审稿,已停产。毙稿理由在「已完成」页底部可查,换条选题试试。')
+            setProgress('')
             break
           }
           setProgress(describe(out))

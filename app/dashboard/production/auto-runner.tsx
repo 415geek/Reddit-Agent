@@ -23,6 +23,7 @@ interface AdvanceOut {
   ok: boolean
   stage?: string
   done?: boolean
+  skipped?: boolean
   error?: string
   detail?: { rewrittenTo?: number; done?: number; total?: number }
 }
@@ -72,6 +73,12 @@ export function AutoRunner({ id, stage }: { id: string; stage: string }) {
         if (!out.ok) {
           setError(`${(out.error ?? '').slice(0, 110)}(cron 会自动重试)`)
           break
+        }
+        // 服务端说有别的调用正在推这条(乐观锁没抢到):
+        // 不能立刻再敲——那会变成空转刷屏,歇口气再看一眼
+        if (out.skipped) {
+          await new Promise((r) => setTimeout(r, 10_000))
+          continue
         }
         setProgress(describe(out))
         if (out.stage === 'awaiting_approval' || out.done) {
