@@ -1,7 +1,7 @@
 import { prisma } from '../prisma'
 import { generateJSONWithSearch } from '../ai'
 import { REFILL_SYSTEM, refillUser } from '../prompts/note'
-import { fingerprintUrl } from '../sources/fetch'
+import { fetchArticleText, fingerprintUrl } from '../sources/fetch'
 import { NOTE_CATEGORIES, TOPIC_GATE } from '../domain'
 import { logEvent } from './events'
 
@@ -68,6 +68,17 @@ export async function refillTopics(count = 4) {
         skipped.push(`已成过稿:${p.source_name}`)
         continue
       }
+
+      // 入池前先抓来源正文。搜索时模型读到的数字,核查阶段要在正文里重新找到
+      // 才算数——三条补题选题连续死在这一点上:来源是报告的下载落地页,
+      // 数字在 PDF 里、页面上没有,核查把全部关键数字判 unverified,必死。
+      // 抓不到正文的选题不进池:反正过不了核查,早拦省下后面三站的钱
+      const fullText = sourceItem?.rawText ?? (await fetchArticleText(p.source_url))
+      if (!fullText) {
+        skipped.push(`${p.title_top}:来源页抓不到正文(下载门/落地页/纯JS),核查必死,不入池`)
+        continue
+      }
+
       if (!sourceItem) {
         sourceItem = await prisma.sourceItem.create({
           data: {
@@ -78,9 +89,12 @@ export async function refillTopics(count = 4) {
             category: p.category === 'policy' ? 'policy' : 'trend',
             publishedAt: p.published_at ? new Date(p.published_at) : null,
             summary,
+            rawText: fullText,
             status: 'shortlisted',
           },
         })
+      } else if (!sourceItem.rawText) {
+        await prisma.sourceItem.update({ where: { id: sourceItem.id }, data: { rawText: fullText } })
       }
 
       await prisma.topic.create({

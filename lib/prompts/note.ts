@@ -322,6 +322,8 @@ ${NOTE_COMPLIANCE}
 - 相关性不许写成因果。研究员把相关写成因果的,降为 supported_inference 并注明
 - 来源冲突时如实标 conflicting_sources,不许挑一个更顺手的版本
 - 你只依据输入素材判断,不引入你自己记忆里的"事实"——你的记忆也会错
+- 素材里的 summaryNote 说明了摘要的出身:来源方自己发布的摘要可当原文对待;
+  编辑检索转述的摘要不算原文依据,里面的数字必须能在 fullText 里找到
 
 最后给一个总体判定 verdict:
 - pass      核心主张是 verified_fact 或 supported_inference,可以写稿

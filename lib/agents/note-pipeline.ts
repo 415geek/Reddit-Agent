@@ -85,6 +85,11 @@ function sourcePayload(item: NoteItem) {
     // 全文优先。RSS 摘要只有两三百字,一个数字翻来覆去用;
     // 原文里通常有七八个支撑数字和日期,专业感的差距主要在这儿
     fullText: s.rawText ?? undefined,
+    // 摘要的出身决定它算不算证据:RSS 描述是来源方自己写的,可当原文对待;
+    // 检索转述是我们自己的复述,必须以 fullText 核对
+    summaryNote: s.feedId
+      ? '本摘要来自来源方自己发布的 RSS 描述,可作为其原文的一部分对待'
+      : '本摘要是编辑联网检索时的转述,不算原文依据;数字必须能在 fullText 里找到,找不到按 unverified 处理',
     category: s.category,
   }
 }
