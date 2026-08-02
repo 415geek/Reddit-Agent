@@ -49,7 +49,7 @@ export function RefillButton() {
             搜索中…
           </>
         ) : (
-          '⊕ 补题'
+          '⊕ 题材更新'
         )}
       </button>
     </div>

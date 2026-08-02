@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { CATEGORY_LABELS, REGION_LABELS, TOPIC_STATUS_LABELS } from '@/lib/domain'
 import { TopicFilters } from './topic-filters'
 import { RefillButton } from './refill-button'
+import { CustomTopicBox } from './custom-topic-box'
 import { TopicActions } from './topic-actions'
 import { TopicCard, statusVariant } from './topic-card'
 
@@ -37,12 +38,14 @@ export default async function TopicsPage({ searchParams }: { searchParams: Searc
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-gray-900">选题库</h1>
             <p className="text-[13px] sm:text-sm text-gray-500 mt-1">
-              共 {total} 条 · 每天早上自动补货;不够就点「补题」,AI 全网搜一轮
+              共 {total} 条 · 每天早上自动补货;不够就点「题材更新」,AI 全网搜一轮
             </p>
           </div>
           <RefillButton />
         </div>
       </div>
+
+      <CustomTopicBox />
 
       <TopicFilters current={searchParams} />
 
