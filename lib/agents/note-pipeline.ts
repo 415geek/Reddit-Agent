@@ -198,7 +198,15 @@ async function runVerify(item: NoteItem) {
 // ── critic:反方审稿(专职推翻) ─────────────────────────────────────────────
 
 /** 反方审稿最多打回几轮。事实层问题退回核查,写作层问题退回重写,各占额度 */
-const MAX_CRITIC_ROUNDS = Number(process.env.NOTE_CRITIC_MAX_ROUNDS || 2)
+const MAX_CRITIC_ROUNDS = Number(process.env.NOTE_CRITIC_MAX_ROUNDS || 4)
+
+/**
+ * 压线放行的地板分。重写额度用完时,事实层完全干净(无致命问题、事实分和实操分
+ * 都过门槛)、只是总分差几分的稿子,放行到待审批并标注「压线」,由人拍板——
+ * 85 分门槛拦的是幻觉和编造,不该拦一篇 82 分的干净稿。这是老板定的规则:
+ * 表达问题修到合理为止就输出,不要一毙了之
+ */
+const SALVAGE_FLOOR = Number(process.env.NOTE_SALVAGE_FLOOR || 78)
 
 interface CriticOutput extends CriticReport {
   scores: QualityScores
@@ -260,8 +268,22 @@ async function runCritic(item: NoteItem) {
 
   const summary = [...(out.fatal ?? []), ...(out.major ?? [])].slice(0, 3).join(';').slice(0, 250)
   if (rewrites >= MAX_CRITIC_ROUNDS) {
-    // 重写额度用完,最后一版也没达标:停产。不抛错——抛错会被当成"临时故障"
-    // 进重试循环,而这是终审结论,要的是落停,不是重试
+    // 重写额度用完。压线条款:事实层干净、总分够到地板分的放行给人定夺;
+    // 真正该死的(致命问题、事实分不够、分数太低)才落停
+    const factClean =
+      !out.factLevelProblem &&
+      (out.fatal ?? []).length === 0 &&
+      (scores?.factAccuracy ?? 0) >= QUALITY_GATE.factAccuracy &&
+      (scores?.practicalValue ?? 0) >= QUALITY_GATE.practicalValue
+    if (factClean && (scores?.total ?? 0) >= SALVAGE_FLOOR) {
+      await prisma.note.update({
+        where: { id: note.id },
+        data: { criticReport: { ...out, gatePassed: true, borderline: true } as unknown as object },
+      })
+      return { passed: true, borderline: true, total: scores?.total }
+    }
+    // 最后一版也没达标:停产。不抛错——抛错会被当成"临时故障"进重试循环,
+    // 而这是终审结论,要的是落停,不是重试
     await prisma.contentItem.update({ where: { id: item.id }, data: { stage: 'rejected' } })
     await prisma.topic.update({ where: { id: item.topicId }, data: { status: 'rejected' } }).catch(() => {})
     return { rejectedByCritic: true, halt: true, total: scores?.total, reason: summary }
@@ -294,6 +316,18 @@ async function runNote(item: NoteItem, qcFeedback?: unknown) {
       qcFeedback = { 合规终审意见: last.qcReport }
     } else if (cr && cr.gatePassed === false) {
       qcFeedback = { 反方审稿意见: cr }
+    }
+  }
+  // 第三版起进入抢救性重写:前两版的"针对性修改"没能过关,说明问题内容
+  // 修不出来,只能删。指令放在反馈最前面,比审稿意见本身优先
+  const upcomingVersion = (item.notes[0]?.version ?? 0) + 1
+  if (qcFeedback != null && upcomingVersion >= 3) {
+    qcFeedback = {
+      抢救性重写指令:
+        '重写机会不多了。审稿点名的数字、因果、案例一律直接删掉,不要辩解、不要换个说法保留;' +
+        '全篇只用 verified_fact 和 supported_inference 的料重构;标题和角度允许彻底换;' +
+        '宁可短一点、朴素一点,也要每一句都站得住。信息密度不够,就把版面让给行动清单和已核实的数字。',
+      ...(qcFeedback as Record<string, unknown>),
     }
   }
   const out = await generateJSON<NoteOutput>({
@@ -387,8 +421,11 @@ async function runQc(item: NoteItem) {
   })
   if (report.passed) return { passed: true }
 
-  // 不通过就打回重写,限次数:一直返工会把钱烧在同一条上
-  if (note.version >= MAX_QC_RETRY + 1) {
+  // 不通过就打回重写,限次数:一直返工会把钱烧在同一条上。
+  // 按"合规不过的次数"数,不按版本号数——版本号里混着审稿打回的重写,
+  // 审稿多打几轮不该吃掉合规这边的返工额度
+  const qcFails = await prisma.note.count({ where: { contentItemId: item.id, status: 'failed_qc' } })
+  if (qcFails > MAX_QC_RETRY) {
     await prisma.contentItem.update({ where: { id: item.id }, data: { stage: 'rejected' } })
     await prisma.topic.update({ where: { id: item.topicId }, data: { status: 'rejected' } }).catch(() => {})
     return {

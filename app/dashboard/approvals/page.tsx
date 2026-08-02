@@ -140,9 +140,11 @@ export default async function ApprovalsPage() {
                 {(() => {
                   const qs = note?.qualityScores as QualityScores | null
                   if (!qs) return null
+                  const borderline = (note?.criticReport as { borderline?: boolean } | null)?.borderline
                   return (
                     <div className="flex flex-wrap gap-1.5 text-xs">
                       <Badge variant="default">质量 {qs.total}/100</Badge>
+                      {borderline && <Badge variant="outline">压线放行·事实已核干净,发不发你定</Badge>}
                       <Badge variant="none">事实 {qs.factAccuracy}/20</Badge>
                       <Badge variant="none">实操 {qs.practicalValue}/20</Badge>
                       <Badge variant="none">北美 {qs.naFit}/15</Badge>
