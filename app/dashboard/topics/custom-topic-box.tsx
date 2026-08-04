@@ -104,6 +104,11 @@ export function CustomTopicBox() {
       }
       setProgress('')
       setError('这条还在后台生产(cron 每小时接力),稍后去已完成页看')
+    } catch {
+      // 建题那一步超时/断网时 res.json() 会直接抛——没有这个 catch,
+      // 转圈提示会永远挂在屏幕上,像死机(线上真的发生过)
+      setProgress('')
+      setError('服务端处理超时或网络中断。题材描述越聚焦,检索越快越容易成功——精简一下再试一次。')
     } finally {
       setBusy(false)
     }

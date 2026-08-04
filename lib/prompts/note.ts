@@ -519,6 +519,10 @@ ${NOTE_COMPLIANCE}
    三档(不可作唯一来源):厂商博客、SEO 站、自媒体——顺藤摸到一手出处改用一手。
 5. source_url 必须是「正文里就有这些数字」的文章页,不要报告下载页/落地页——
    下游核查会逐字在正文里找数字,找不到整条必死。
+6. source_url 优先给行业媒体的报道页(NRN、Restaurant Business、Restaurant Dive、
+   Modern Restaurant Management 这类):平台厂商的官方博客(Toast/TouchBistro/Square)
+   和 Business Wire 通稿页经常是纯 JS 渲染,抓不到正文,实测多次整条报废。
+   要用厂商报告里的数据,找一篇转引了这些数据的媒体报道页,引媒体那篇。
 
 铁律:搜不到一二档来源支撑的题材,输出空数组 [],并且不编。
 宁可告诉老板「这个题材找不到可核实的数据」,也不许拿三档来源凑数或编数字。

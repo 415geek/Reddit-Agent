@@ -43,8 +43,10 @@ export async function customTopic(description: string) {
       system: CUSTOM_TOPIC_SYSTEM,
       user: customTopicUser(description, recent.map((t) => t.title)),
       maxTokens: 8192,
-      // 比补题给得多:命题作文要交叉验证,搜得深一点值得
-      maxSearches: 8,
+      // 5 次是实测出的上限:8 次检索 + 抓正文曾经顶穿 Vercel 60 秒函数上限,
+      // 函数被杀时连失败事件都来不及写,前端只能干转圈。深度让给写稿链,
+      // 建题这步先保证能在预算内活着回来
+      maxSearches: 5,
       mockKey: 'note.custom',
     })
     const picks: CustomPick[] = Array.isArray(raw) ? raw : Array.isArray(raw?.topics) ? raw.topics : []
@@ -56,9 +58,16 @@ export async function customTopic(description: string) {
     }
 
     // 候选按扎实程度排序,逐个试抓正文,第一个抓到的就用——
-    // 抓不到正文的候选和补题同罪:核查必死,不做
+    // 抓不到正文的候选和补题同罪:核查必死,不做。
+    // 只试前两个、每个限时 12 秒:检索已经花掉大半预算,抓正文这步
+    // 再慢也不能把整个函数拖死(超时被杀 = 用户面前永远转圈)
     const skipped: string[] = []
-    for (const p of picks) {
+    const fetchWithDeadline = (url: string) =>
+      Promise.race([
+        fetchArticleText(url),
+        new Promise<null>((r) => setTimeout(() => r(null), 12_000)),
+      ])
+    for (const p of picks.slice(0, 2)) {
       if (!p.title_top || !p.title_bottom || !p.source_url) {
         skipped.push('候选缺字段')
         continue
@@ -69,7 +78,7 @@ export async function customTopic(description: string) {
         skipped.push(`${p.source_name}:这篇来源已经成过稿`)
         continue
       }
-      const fullText = sourceItem?.rawText ?? (await fetchArticleText(p.source_url))
+      const fullText = sourceItem?.rawText ?? (await fetchWithDeadline(p.source_url))
       if (!fullText) {
         skipped.push(`${p.source_name}:来源页抓不到正文`)
         continue
