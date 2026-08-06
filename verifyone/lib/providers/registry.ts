@@ -6,14 +6,16 @@ import { mockRentCast } from "@/lib/providers/mock/rentcast.mock";
 import { mockOpenSanctions } from "@/lib/providers/mock/opensanctions.mock";
 import { mockCaSos } from "@/lib/providers/mock/ca-sos.mock";
 import { dataSf } from "@/lib/providers/datasf";
+import { trestle } from "@/lib/providers/trestle";
 
 /**
  * Provider registry — the single place where vendors are wired in.
  *
  * PROVIDER_MODE=mock  → paid vendors are replaced by clearly-labelled mocks.
- * PROVIDER_MODE=live  → real adapters (Phase 2+) are loaded instead; a live
- *                       adapter missing its API key must fail fast at startup,
- *                       never silently fall back to mock data.
+ * PROVIDER_MODE=live  → only real adapters run, and only those whose API key is
+ *                       present. A vendor without a key is simply omitted (its
+ *                       data is absent, never mocked). Mock data can never reach
+ *                       a live report.
  *
  * DataSF is free/open data and runs live in both modes.
  */
@@ -21,16 +23,22 @@ import { dataSf } from "@/lib/providers/datasf";
 function buildRegistry(): DataProvider[] {
   const mode = process.env.PROVIDER_MODE === "live" ? "live" : "mock";
 
-  if (mode === "live") {
-    // Phase 2+: import real adapters here (trestle.ts, pdl.ts, rentcast.ts,
-    // opensanctions.ts, ca-sos vendor). Fail fast so mock data can never
-    // reach production users.
-    throw new Error(
-      "PROVIDER_MODE=live but no live provider adapters are implemented yet (Phase 2)."
-    );
+  // Open data — always live, no key required (DATASF_APP_TOKEN just raises limits).
+  const providers: DataProvider[] = [dataSf];
+
+  if (mode === "mock") {
+    providers.push(mockTrestle, mockPeopleDataLabs, mockRentCast, mockOpenSanctions, mockCaSos);
+    return providers;
   }
 
-  return [mockTrestle, mockPeopleDataLabs, mockRentCast, mockOpenSanctions, mockCaSos, dataSf];
+  // Live: enable each real adapter only when its key is configured.
+  if (process.env.TRESTLE_API_KEY) providers.push(trestle);
+
+  // People Data Labs / RentCast / OpenSanctions / CA SOS live adapters are not
+  // wired yet. When their keys and adapters land, register them here. Until
+  // then they are absent from live reports — never mocked.
+
+  return providers;
 }
 
 let registry: DataProvider[] | null = null;
