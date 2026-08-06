@@ -143,6 +143,20 @@ export async function generateJSONWithSearch<T>(opts: {
   if ('value' in parsed) return parsed.value
   const parsed2 = parseLoose<T>(stripFences(text))
   if ('value' in parsed2) return parsed2.value
-  throw new Error(`联网选题输出不是合法JSON:${parsed.error};原文开头:${text.slice(0, 200)}`)
+  throw new SearchOutputNotJson(parsed.error, text)
+}
+
+/**
+ * 联网生成的输出不是 JSON 时,把原文一起带出去。
+ * 模型偶尔会放着 JSON 不写、改用大白话讲它对题材的顾虑(实测:老板要求
+ * 倾向某品牌时它会解释为什么不该做)——这段话对用户有价值,调用方
+ * 可以把它当"编辑的顾虑"展示,而不是让它淹死在解析报错里。
+ */
+export class SearchOutputNotJson extends Error {
+  rawText: string
+  constructor(parseErr: string, rawText: string) {
+    super(`联网选题输出不是合法JSON:${parseErr};原文开头:${rawText.slice(0, 200)}`)
+    this.rawText = rawText
+  }
 }
 

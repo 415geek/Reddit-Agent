@@ -43,9 +43,13 @@ export function CustomTopicBox() {
   const [progress, setProgress] = useState('')
   const [doneTitle, setDoneTitle] = useState('')
   const [error, setError] = useState('')
+  // AI 编辑对题材的顾虑(比如"倾向要求靠的来源全是品牌自家博客")。
+  // 有顾虑时不直接生成,把话摆出来 + 「确定生成」按钮,老板拍板后带确认标记重跑
+  const [concern, setConcern] = useState('')
+  const [sponsored, setSponsored] = useState(false)
   const stop = useRef(false)
 
-  async function run() {
+  async function run(confirmed = false) {
     const description = text.trim()
     if (description.length < 5) {
       setError('先把想发的题材写成一句完整的话')
@@ -54,19 +58,33 @@ export function CustomTopicBox() {
     setBusy(true)
     setError('')
     setDoneTitle('')
-    setProgress('AI 正在理解题材并深度检索来源,约 1 分钟…')
+    if (!confirmed) setConcern('')
+    setProgress(confirmed ? '已确认,按合规写法继续生成…' : 'AI 正在理解题材并深度检索来源,约 1 分钟…')
     try {
       const res = await fetch('/api/topics/custom', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description }),
+        body: JSON.stringify({ description, confirmed, sponsored: confirmed && sponsored }),
       })
-      const json = (await res.json()) as { ok: boolean; itemId?: string; title?: string; error?: string }
+      const json = (await res.json()) as {
+        ok: boolean
+        itemId?: string
+        title?: string
+        error?: string
+        needsConfirm?: boolean
+        concern?: string
+      }
+      if (json.needsConfirm && json.concern) {
+        setConcern(json.concern)
+        setProgress('')
+        return
+      }
       if (!json.ok || !json.itemId) {
         setError(json.error ?? '出错了,再试一次')
         setProgress('')
         return
       }
+      setConcern('')
       setProgress(`已建题「${json.title}」,开始生产…`)
       router.refresh()
 
@@ -126,6 +144,32 @@ export function CustomTopicBox() {
         placeholder="用你自己的话描述想发的题材,比如:最近很多老板在问外卖平台的照片拍摄服务值不值得买,帮我查查有没有数据说明照片质量对下单率的影响"
         className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-60"
       />
+      {concern && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 space-y-2">
+          <p className="text-xs font-semibold text-amber-700">AI 编辑的顾虑(生成前请过目)</p>
+          <p className="text-sm text-amber-900 whitespace-pre-wrap">{concern}</p>
+          <label className="flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={sponsored}
+              onChange={(e) => setSponsored(e.target.checked)}
+              disabled={busy}
+              className="mt-0.5"
+            />
+            <span>
+              我与相关品牌有合作关系,同意在文中显著标注「合作内容」
+              (标注后倾向可以明说;不勾选则写成客观对比,品牌凭可核实的事实入场)
+            </span>
+          </label>
+          <button
+            onClick={() => run(true)}
+            disabled={busy}
+            className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white active:scale-95 transition disabled:opacity-50"
+          >
+            {busy ? '生成中…' : '✓ 确定生成'}
+          </button>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="min-w-0 text-xs">
           {progress && (
@@ -145,7 +189,7 @@ export function CustomTopicBox() {
           )}
         </div>
         <button
-          onClick={run}
+          onClick={() => run(false)}
           disabled={busy || text.trim().length < 5}
           className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white active:scale-95 transition disabled:opacity-50"
         >

@@ -1,5 +1,5 @@
 import { prisma } from '../prisma'
-import { generateJSONWithSearch } from '../ai'
+import { generateJSONWithSearch, SearchOutputNotJson } from '../ai'
 import { CUSTOM_TOPIC_SYSTEM, customTopicUser } from '../prompts/note'
 import { fetchArticleText, fingerprintUrl } from '../sources/fetch'
 import { NOTE_CATEGORIES } from '../domain'
@@ -29,8 +29,19 @@ interface CustomPick {
   scores?: { total?: number } & Record<string, number | undefined>
 }
 
-export async function customTopic(description: string) {
-  await logEvent({ stage: 'note_custom', status: 'started', detail: { description: description.slice(0, 200) } })
+export interface CustomTopicOpts {
+  /** 老板看过 AI 编辑的顾虑后点了「确定生成」 */
+  confirmed?: boolean
+  /** 老板声明与相关品牌有合作关系,内容按显著披露的合作内容来写 */
+  sponsored?: boolean
+}
+
+export async function customTopic(description: string, opts: CustomTopicOpts = {}) {
+  await logEvent({
+    stage: 'note_custom',
+    status: 'started',
+    detail: { description: description.slice(0, 200), confirmed: !!opts.confirmed, sponsored: !!opts.sponsored },
+  })
   try {
     const recent = await prisma.topic.findMany({
       where: { source: { in: ['source_item', 'web_search'] } },
@@ -39,17 +50,49 @@ export async function customTopic(description: string) {
       select: { title: true },
     })
 
-    const raw = await generateJSONWithSearch<CustomPick[] | { topics?: CustomPick[] }>({
-      system: CUSTOM_TOPIC_SYSTEM,
-      user: customTopicUser(description, recent.map((t) => t.title)),
-      maxTokens: 8192,
-      // 5 次是实测出的上限:8 次检索 + 抓正文曾经顶穿 Vercel 60 秒函数上限,
-      // 函数被杀时连失败事件都来不及写,前端只能干转圈。深度让给写稿链,
-      // 建题这步先保证能在预算内活着回来
-      maxSearches: 5,
-      mockKey: 'note.custom',
-    })
+    let user = customTopicUser(description, recent.map((t) => t.title))
+    if (opts.confirmed) {
+      // 确认续跑:顾虑老板已经看过,这一轮必须给出 topics,倾向按合规路径落地。
+      // 暗推在确认后也不解锁——确认解锁的是"继续做这个题材",不是"跳过披露"
+      user += `\n\n老板已看过你的顾虑并确认继续生成。这次不要再输出 concern,直接输出 topics。
+倾向处理方式:${
+        opts.sponsored
+          ? '老板已声明与相关品牌有合作关系。按「合作内容」来写:angle 里必须带「合作内容,文中需显著披露合作关系」,倾向可以明说,事实照样全部可溯源。'
+          : '老板未声明合作关系。写成客观横向对比:相关品牌凭一二档来源里的事实入场,结论跟着事实走;来源撑不起的倾向不写。'
+      }`
+    }
+
+    let raw: CustomPick[] | { topics?: CustomPick[]; concern?: string }
+    try {
+      raw = await generateJSONWithSearch<CustomPick[] | { topics?: CustomPick[]; concern?: string }>({
+        system: CUSTOM_TOPIC_SYSTEM,
+        user,
+        maxTokens: 8192,
+        // 5 次是实测出的上限:8 次检索 + 抓正文曾经顶穿 Vercel 60 秒函数上限,
+        // 函数被杀时连失败事件都来不及写,前端只能干转圈。深度让给写稿链,
+        // 建题这步先保证能在预算内活着回来
+        maxSearches: 5,
+        mockKey: 'note.custom',
+      })
+    } catch (e) {
+      // 模型放着 JSON 不写、用大白话讲顾虑的情况(实测发生过):
+      // 那段话就是给老板看的,原样端出去 + 确认按钮,别让它淹死在解析报错里
+      if (e instanceof SearchOutputNotJson) {
+        const concern = e.rawText.trim().slice(0, 600)
+        await logEvent({ stage: 'note_custom', status: 'succeeded', detail: { needsConfirm: true, concern: concern.slice(0, 200) } })
+        return { ok: false as const, needsConfirm: true as const, concern }
+      }
+      throw e
+    }
+
     const picks: CustomPick[] = Array.isArray(raw) ? raw : Array.isArray(raw?.topics) ? raw.topics : []
+    const concern = !Array.isArray(raw) && typeof raw?.concern === 'string' ? raw.concern.trim() : ''
+
+    // 编辑有顾虑且没给选题:把顾虑端给老板,等他点「确定生成」
+    if (concern && !picks.length) {
+      await logEvent({ stage: 'note_custom', status: 'succeeded', detail: { needsConfirm: true, concern: concern.slice(0, 200) } })
+      return { ok: false as const, needsConfirm: true as const, concern: concern.slice(0, 600) }
+    }
 
     if (!picks.length) {
       const msg = '这个题材搜不到一二档来源的可核实数据,没法保证真实性。换个说法或缩小范围再试。'
@@ -118,7 +161,11 @@ export async function customTopic(description: string) {
             titleTop: p.title_top,
             titleBottom: p.title_bottom,
             noteTitle: p.note_title,
-            angle: p.angle,
+            // 合作声明跟着 angle 走:写稿和合规终审都吃这一行,双保险——
+            // 就算模型没按指令把披露写进 angle,这里也补上
+            angle: opts.sponsored && !/合作内容/.test(p.angle)
+              ? `${p.angle}(合作内容:文中需显著披露与相关品牌的合作关系)`
+              : p.angle,
             whyNow: p.why_now,
             // 老板的原话跟着选题走,审稿理由和回溯时都用得上
             userBrief: description.slice(0, 500),
