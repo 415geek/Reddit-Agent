@@ -69,10 +69,21 @@ describe("normalizeAddress", () => {
 });
 
 describe("parseSearchInput", () => {
-  it("rejects name searches with a helpful message", () => {
-    const result = parseSearchInput("Jane Doe");
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe("unsupported_name_search");
+  it("accepts a name search and extracts optional city/state hints", () => {
+    const bare = parseSearchInput("Jane Doe");
+    expect(bare.ok).toBe(true);
+    if (bare.ok) {
+      expect(bare.input.type).toBe("name");
+      expect(bare.input.normalized).toBe("Jane Doe");
+    }
+
+    const withCity = parseSearchInput("Jane Doe, San Francisco, CA");
+    expect(withCity.ok).toBe(true);
+    if (withCity.ok) {
+      expect(withCity.input.type).toBe("name");
+      expect(withCity.input.normalized).toBe("Jane Doe");
+      expect(withCity.input.details.state).toBe("CA");
+    }
   });
 
   it("normalizes a phone search", () => {

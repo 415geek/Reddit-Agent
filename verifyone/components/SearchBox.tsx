@@ -25,7 +25,7 @@ const PROGRESS_STEPS = [
 
 const EXAMPLES = [
   { label: "Phone", value: "(415) 555-0134" },
-  { label: "Email", value: "jordan.chen@example.com" },
+  { label: "Name", value: "Golden Gate Retail Group" },
   { label: "Address", value: "548 Market St, San Francisco, CA 94104" },
 ];
 
@@ -82,13 +82,26 @@ export function SearchBox() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: query.trim(), mode: "execute", acceptedUsePolicy: true }),
       });
-      const data = (await res.json()) as { reportId?: string; error?: string };
-      if (!res.ok || !data.reportId) {
+      const data = (await res.json()) as { id?: string; error?: string };
+      if (!res.ok || !data.id) {
         setError(data.error ?? "Search failed. You were not charged.");
         setStage("confirm");
         return;
       }
-      router.push(`/report/${data.reportId}`);
+      // Persist client-side: Vercel serverless instances don't share memory,
+      // so the report page reads from sessionStorage rather than server state.
+      try {
+        sessionStorage.setItem(`verifyone:report:${data.id}`, JSON.stringify(data));
+        const indexRaw = sessionStorage.getItem("verifyone:reports");
+        const index = (indexRaw ? JSON.parse(indexRaw) : []) as string[];
+        sessionStorage.setItem(
+          "verifyone:reports",
+          JSON.stringify([data.id, ...index.filter((id) => id !== data.id)].slice(0, 50))
+        );
+      } catch {
+        // sessionStorage unavailable (private mode) — report page will handle it.
+      }
+      router.push(`/report/${data.id}`);
     } catch {
       setError("Network error. You were not charged.");
       setStage("confirm");
@@ -111,8 +124,8 @@ export function SearchBox() {
           inputMode="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Enter a phone number, email, or address"
-          aria-label="Search by phone number, email, or address"
+          placeholder="Enter a phone number, email, address, or name"
+          aria-label="Search by phone number, email, address, or name"
           className="flex-1 h-14 px-5 rounded-card border border-neutral-300 bg-white text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-brand"
         />
         <button

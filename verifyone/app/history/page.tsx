@@ -1,20 +1,37 @@
-import Link from "next/link";
-import { listReports } from "@/lib/store";
+"use client";
 
-export const dynamic = "force-dynamic";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import type { SearchReport } from "@/lib/types";
 
 export default function HistoryPage() {
-  const reports = listReports();
+  const [reports, setReports] = useState<SearchReport[] | undefined>(undefined);
+
+  useEffect(() => {
+    try {
+      const indexRaw = sessionStorage.getItem("verifyone:reports");
+      const ids = (indexRaw ? JSON.parse(indexRaw) : []) as string[];
+      const loaded = ids
+        .map((id) => sessionStorage.getItem(`verifyone:report:${id}`))
+        .filter((v): v is string => Boolean(v))
+        .map((raw) => JSON.parse(raw) as SearchReport);
+      setReports(loaded);
+    } catch {
+      setReports([]);
+    }
+  }, []);
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
       <h1 className="text-2xl font-semibold text-neutral-900">Search history</h1>
       <p className="mt-1 text-sm text-neutral-500">
-        Demo mode: history is stored in memory on this server instance. With Supabase connected,
-        history is private per account and deletable at any time.
+        History is kept in your browser for this session. With Supabase connected (Phase 2), it
+        becomes a private, persistent, deletable account history.
       </p>
 
-      {reports.length === 0 ? (
+      {reports === undefined ? (
+        <p className="mt-8 text-sm text-neutral-400">Loading…</p>
+      ) : reports.length === 0 ? (
         <div className="mt-8 rounded-card border border-neutral-200 bg-white p-8 text-center">
           <p className="text-neutral-600">No searches yet.</p>
           <Link href="/" className="mt-2 inline-block text-sm text-brand hover:underline">

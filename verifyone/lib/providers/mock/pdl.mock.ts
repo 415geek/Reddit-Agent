@@ -7,7 +7,7 @@ export const mockPeopleDataLabs: DataProvider = {
   costCredits: 3,
 
   supports(inputType: SearchInputType): boolean {
-    return inputType === "phone" || inputType === "email";
+    return inputType === "phone" || inputType === "email" || inputType === "name";
   },
 
   async search(input: NormalizedSearchInput): Promise<NormalizedProviderResult> {

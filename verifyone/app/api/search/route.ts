@@ -63,5 +63,8 @@ export async function POST(req: NextRequest) {
   const report = await runSearch(parsed.input);
   saveReport(report);
 
-  return NextResponse.json({ reportId: report.id, totalCredits: report.totalCredits });
+  // Return the full report so the client can persist it in sessionStorage.
+  // Vercel serverless instances don't share the in-memory store, so the
+  // report page reads from the client, not from server memory (Phase 1).
+  return NextResponse.json(report);
 }

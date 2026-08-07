@@ -11,7 +11,13 @@ export const mockOpenSanctions: DataProvider = {
   costCredits: 1,
 
   supports(inputType: SearchInputType): boolean {
-    return inputType === "phone" || inputType === "email" || inputType === "address";
+    // Name is the primary key for sanctions/PEP screening.
+    return (
+      inputType === "phone" ||
+      inputType === "email" ||
+      inputType === "address" ||
+      inputType === "name"
+    );
   },
 
   async search(_input: NormalizedSearchInput): Promise<NormalizedProviderResult> {

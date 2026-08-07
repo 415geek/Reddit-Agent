@@ -5,7 +5,7 @@
  * Name-only search is excluded to avoid false matches (see docs/PRD.md).
  */
 
-export type SearchInputType = "phone" | "email" | "address";
+export type SearchInputType = "phone" | "email" | "address" | "name";
 
 export interface NormalizedSearchInput {
   type: SearchInputType;
