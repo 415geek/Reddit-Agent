@@ -1,0 +1,371 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── 素材源白名单 ──────────────────────────────────────────────────────────────
+//
+// 图文这条线不再吃固定选题库,而是每天从这些源里采,再从采到的东西里挑选题。
+// 用白名单而不是让模型满世界搜,是因为这个号最能打的是政策法规类
+// (账号里最爆的一条「44% 的美国人今年少给小费」232 赞、5 万浏览),
+// 而政策必须能追溯到一手出处——摘要里要能写出「Popmenu 2026」这种来源。
+
+model SourceFeed {
+  id            String    @id @default(cuid())
+  slug          String    @unique
+  name          String // "National Restaurant Association"
+  url           String    @db.Text
+  kind          String    @default("rss") // rss | html | api
+  category      String // policy | regulation | trend | report | media | data
+  region        String    @default("north_america") // north_america | global
+  /// 采信权重 0-100,喂给选题评分的 credibility 维度:政府和协会高于行业媒体
+  weight        Int       @default(50)
+  active        Boolean   @default(true)
+  lastFetchedAt DateTime?
+  lastError     String?   @db.Text
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  items SourceItem[]
+
+  @@index([active, category])
+  @@map("bb_source_feeds")
+}
+
+// ── 采集到的原始素材 ──────────────────────────────────────────────────────────
+
+model SourceItem {
+  id          String    @id @default(cuid())
+  feedId      String?
+  /// url 归一化后的哈希。同一条新闻会被多家转载,靠这个去重
+  fingerprint String    @unique
+  url         String    @db.Text
+  title       String    @db.Text
+  source      String
+  category    String
+  region      String    @default("north_america")
+  publishedAt DateTime?
+  summary     String?   @db.Text
+  rawText     String?   @db.Text
+  tags        String[]  @default([])
+  /// new 待挑 | shortlisted 已入选题池 | used 已成稿 | skipped 挑过没要
+  status      String    @default("new")
+  skipReason  String?
+  collectedAt DateTime  @default(now())
+
+  feed   SourceFeed? @relation(fields: [feedId], references: [id], onDelete: SetNull)
+  topics Topic[]
+
+  @@index([status, collectedAt])
+  @@index([category, publishedAt])
+  @@map("bb_source_items")
+}
+
+// ── 系列(强化"追更感":北美商业解剖、免费的代价…) ─────────────────────────────
+
+model Series {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  topics Topic[]
+
+  @@map("bb_series")
+}
+
+// ── 选题 ──────────────────────────────────────────────────────────────────────
+
+model Topic {
+  id           String   @id @default(cuid())
+  title        String
+  hook         String? // 一句话冲突点:"你以为A,其实B"
+  category     String // 见 domain.ts:视频用行为经济学那套,图文用餐饮运营那套
+  region       String   @default("global") // north_america | china | global
+  seriesId     String?
+  source       String   @default("seed") // seed | daily | sequel | manual | source_item
+  /// 图文选题是从哪条采集素材来的。视频选题为空
+  sourceItemId String?
+  status       String   @default("idea") // idea | scored | rejected | queued | in_production | produced | published | retired
+  scoreTotal   Float?
+  scores       Json? // {conflict,relevance,emotion,freshness,story,credibility,conversion}
+  riskFlags    String[] @default([])
+  notes        String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  series     Series?       @relation(fields: [seriesId], references: [id])
+  sourceItem SourceItem?   @relation(fields: [sourceItemId], references: [id], onDelete: SetNull)
+  items      ContentItem[]
+
+  @@index([status])
+  @@index([category, region])
+  @@index([scoreTotal])
+  @@map("bb_topics")
+}
+
+// ── 生产单元(一条视频) ───────────────────────────────────────────────────────
+
+model ContentItem {
+  id              String    @id @default(cuid())
+  topicId         String
+  title           String
+  /// 产物形态。note = 小红书图文(当前主线),video = 抖音短视频(保留但停用)。
+  /// 两者阶段序列不同,见 domain.ts 的 STAGES_BY_KIND。
+  kind            String    @default("note") // note | video
+  stage           String    @default("research")
+  coverTemplate   String    @default("truth") // truth | counter | control
+  coverTitleLines String[]  @default([])
+  publishNote     String    @default("AI辅助创作,内容仅作知识科普。")
+  stageEnteredAt  DateTime  @default(now())
+  producedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  topic        Topic           @relation(fields: [topicId], references: [id])
+  research     Research?
+  notes        Note[]
+  scripts      Script[]
+  storyboards  Storyboard[]
+  assets       Asset[]
+  approvals    Approval[]
+  publications Publication[]
+  events       PipelineEvent[]
+
+  @@index([stage])
+  @@index([kind, stage])
+  @@map("bb_content_items")
+}
+
+// ── 图文笔记(小红书一条 = 封面 + 4-5 张内页 + 正文) ─────────────────────────
+//
+// 版式照着现有账号复刻:上图下白卡、红色栏目标签、第一行黑字抛现象、
+// 第二行砖红给反转、左侧红竖线带摘要、右下角页码。
+// 封面标题和 feed 里的笔记标题是两套文案,不能共用——
+// 封面要短促成对(「涨价救利润?/这条路到头了」),
+// feed 标题要能被搜到(「90% 老板都涨过价,现在客人开始用脚投票」)。
+
+model Note {
+  id            String @id @default(cuid())
+  contentItemId String
+  version       Int    @default(1)
+
+  /// 栏目标签,如「消费者心理 · 时段」「算账 · Dual Pricing」
+  label       String
+  /// 封面主标题第一行(黑字,抛现象/否定)
+  titleTop    String
+  /// 封面主标题第二行(砖红,给反转答案)
+  titleBottom String
+  /// 封面摘要:权威来源+数字 → 一句解释 → 今晚就能做的动作
+  summary     String @db.Text
+
+  /// 内页卡片 [{idx, label, titleTop, titleBottom, body, bullets[], imagePrompt, imageStyle}]
+  cards Json
+
+  /// feed 里显示的笔记标题(和封面标题不同,要带可搜的词)
+  noteTitle String   @db.Text
+  bodyText  String   @db.Text
+  hashtags  String[] @default([])
+  /// [{name, url, publishedAt}] —— 摘要里引用了谁,必须能点回去
+  sources   Json     @default("[]")
+
+  qcReport  Json?
+  /// 反方审稿报告:致命/主要/次要问题、是否放行
+  criticReport Json?
+  /// 百分制质量分(事实20/实操20/北美15/新颖10/逻辑10/视觉10/收藏5/转发5/可信5)
+  qualityScores Json?
+  status    String   @default("draft") // draft | passed_qc | failed_qc
+  createdAt DateTime @default(now())
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@unique([contentItemId, version])
+  @@map("bb_notes")
+}
+
+// ── 资料研究(强制来源,禁止编造) ─────────────────────────────────────────────
+
+model Research {
+  id               String   @id @default(cuid())
+  contentItemId    String   @unique
+  coreClaim        String   @db.Text
+  supportingFacts  Json // [{claim, source, confidence}]
+  counterarguments Json     @default("[]")
+  riskNotes        Json     @default("[]")
+  usableExamples   Json     @default("[]")
+  raw              String?  @db.Text
+  createdAt        DateTime @default(now())
+
+  /// ClaimEvidenceMap:核实产出的主张清单,每条带 verified_fact|supported_inference|
+  /// expert_opinion|anecdotal_evidence|unverified_claim|outdated|conflicting_sources 标记。
+  /// 写稿只能把前两档当核心论点;人工审批界面按这个渲染"每句话对应哪条来源"
+  claims Json @default("[]")
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@map("bb_research")
+}
+
+// ── 脚本(五段结构,60-100秒) ─────────────────────────────────────────────────
+
+model Script {
+  id             String   @id @default(cuid())
+  contentItemId  String
+  version        Int      @default(1)
+  beats          Json // {hook, scene, principle, caseStudy, twist, interaction}
+  fullText       String   @db.Text
+  durationEstSec Int      @default(90)
+  qcReport       Json?
+  status         String   @default("draft") // draft | passed_qc | failed_qc
+  createdAt      DateTime @default(now())
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@unique([contentItemId, version])
+  @@map("bb_scripts")
+}
+
+// ── 分镜(8-12图 + 2-3动态镜头) ──────────────────────────────────────────────
+
+model Storyboard {
+  id            String   @id @default(cuid())
+  contentItemId String
+  version       Int      @default(1)
+  shots         Json // [{idx, type: image|motion, imagePrompt, motionPrompt?, durationSec, cameraMove, narration}]
+  bgmMood       String? // suspense | momentum | insight | warm(由分镜模型选,空则按封面模板兜底)
+  turnShotIdx   Int? // 反转点镜头:合成时在这里让音乐静一拍再回来,做出节奏断点
+  createdAt     DateTime @default(now())
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@unique([contentItemId, version])
+  @@map("bb_storyboards")
+}
+
+// ── 资产(封面/分镜图/动态镜头/配音/字幕/成片) ──────────────────────────────────
+
+model Asset {
+  id            String   @id @default(cuid())
+  contentItemId String
+  /// 图文:card_image(卡片上半部分的配图)| card_final(渲染好的整张卡片 PNG)
+  /// 视频:cover_bg | cover_final | shot_image | motion_clip | voiceover | bgm | subtitle | final_video
+  kind          String
+  /// 图文里是卡片序号(0 = 封面),视频里是镜头序号
+  shotIndex     Int?
+  provider      String // mock | seedream | seedance | doubao | remotion | og
+  path          String
+  meta          Json     @default("{}")
+  isMock        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@index([contentItemId, kind])
+  @@map("bb_assets")
+}
+
+// ── 审批(Telegram / 网页) ────────────────────────────────────────────────────
+
+model Approval {
+  id            String   @id @default(cuid())
+  contentItemId String
+  channel       String // telegram | web
+  decision      String // approved | rejected
+  notes         String?
+  decidedBy     String?
+  decidedAt     DateTime @default(now())
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@map("bb_approvals")
+}
+
+// ── 发布(Phase 1 人工登记,Phase 3 接抖音开放平台) ────────────────────────────
+
+model Publication {
+  id            String   @id @default(cuid())
+  contentItemId String
+  platform      String   @default("xiaohongshu") // xiaohongshu | douyin
+  mode          String   @default("manual") // manual | api
+  externalId    String?
+  shareUrl      String?
+  publishedAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  contentItem ContentItem      @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+  metrics     MetricSnapshot[]
+
+  @@map("bb_publications")
+}
+
+// ── 数据快照(24h/72h/168h,支撑与账号自身基准对比) ───────────────────────────
+
+model MetricSnapshot {
+  id             String   @id @default(cuid())
+  publicationId  String
+  atHours        Int // 24 | 72 | 168
+  plays          Int      @default(0)
+  completionRate Float? // 0-1
+  avgWatchSec    Float?
+  likes          Int      @default(0)
+  favorites      Int      @default(0)
+  shares         Int      @default(0)
+  comments       Int      @default(0)
+  followersDelta Int      @default(0)
+  source         String   @default("manual") // manual | api
+  capturedAt     DateTime @default(now())
+
+  publication Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  @@unique([publicationId, atHours])
+  @@map("bb_metric_snapshots")
+}
+
+// ── 复盘 ──────────────────────────────────────────────────────────────────────
+
+model Insight {
+  id              String   @id @default(cuid())
+  periodStart     DateTime
+  periodEnd       DateTime
+  summary         String   @db.Text
+  recommendations Json     @default("[]") // [{type: sequel|retire|adjust, topicTitle, reason}]
+  createdAt       DateTime @default(now())
+
+  @@map("bb_insights")
+}
+
+// ── 流水线事件日志 ────────────────────────────────────────────────────────────
+
+model PipelineEvent {
+  id            String   @id @default(cuid())
+  contentItemId String?
+  stage         String
+  status        String // started | succeeded | failed
+  detail        Json     @default("{}")
+  error         String?  @db.Text
+  createdAt     DateTime @default(now())
+
+  contentItem ContentItem? @relation(fields: [contentItemId], references: [id], onDelete: SetNull)
+
+  @@index([contentItemId])
+  @@index([createdAt])
+  @@map("bb_pipeline_events")
+}
+
+// ── 键值配置(账号基准等) ─────────────────────────────────────────────────────
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("bb_settings")
+}

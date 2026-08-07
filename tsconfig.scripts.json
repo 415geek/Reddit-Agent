@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // 主 tsconfig 用 jsx:preserve,那是给 Next 的构建管线用的——
+    // JSX 原样透传,由 Next 自己转换。但离线脚本是 tsx/esbuild 直接跑,
+    // preserve 出来的 JSX 到了 Node 手里就是语法错误(React is not defined)。
+    // 这里单独覆盖成自动运行时,不动主配置,免得影响 next build。
+    "jsx": "react-jsx"
+  }
+}

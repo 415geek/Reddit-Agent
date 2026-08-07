@@ -1,0 +1,13 @@
+.env
+.env.local
+.env.*.local
+node_modules/
+.next/
+out/
+*.db
+*.log
+.DS_Store
+prisma/migrations/dev*
+data/
+tsconfig.tsbuildinfo
+.vercel

@@ -1,0 +1,64 @@
+{
+  "name": "BizBrain 01 — 每日选题生成",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-daily",
+      "name": "每天 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.FACTORY_APP_URL }}/api/pipeline/topics/generate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-webhook-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"count\": 30}",
+        "options": { "timeout": 300000 }
+      },
+      "id": "generate-topics",
+      "name": "生成30个选题并评分",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_CHAT_ID, text: '💡 今日选题已生成:入库 ' + $json.saved + ' 条,风险淘汰 ' + $json.rejected + ' 条。去看板挑选入队:' + $env.FACTORY_APP_URL + '/dashboard/topics' }) }}",
+        "options": { "timeout": 15000 }
+      },
+      "id": "telegram-summary",
+      "name": "Telegram 摘要",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0]
+    }
+  ],
+  "connections": {
+    "每天 08:00": { "main": [[{ "node": "生成30个选题并评分", "type": "main", "index": 0 }]] },
+    "生成30个选题并评分": { "main": [[{ "node": "Telegram 摘要", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

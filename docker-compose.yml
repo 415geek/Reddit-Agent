@@ -1,0 +1,91 @@
+version: "3.9"
+
+services:
+  bizbrain-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bizbrain-app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3031:3031"
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      - PORT=3031
+      - DATA_DIR=/app/data
+    volumes:
+      - bizbrain-data:/app/data
+    depends_on:
+      bizbrain-postgres:
+        condition: service_healthy
+    networks:
+      - bizbrain-network
+      - n8n_default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.bizbrain.rule=Host(`${FACTORY_DOMAIN}`)"
+      - "traefik.http.routers.bizbrain.entrypoints=websecure"
+      - "traefik.http.routers.bizbrain.tls.certresolver=mytlschallenge"
+      - "traefik.http.services.bizbrain.loadbalancer.server.port=3031"
+      - "traefik.http.routers.bizbrain.service=bizbrain"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3031/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  bizbrain-postgres:
+    image: postgres:16-alpine
+    container_name: bizbrain-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bizbrain
+      POSTGRES_USER: bizbrain_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME_PASSWORD}
+    volumes:
+      - bizbrain-pgdata:/var/lib/postgresql/data
+    networks:
+      - bizbrain-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bizbrain_user -d bizbrain"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # PostgreSQL 不对外暴露,仅内部网络可达
+
+  # 成片合成 worker:去应用那边领 compose 阶段的任务,用 FFmpeg 烧成片。
+  # 单独一个容器,是因为合成要跑几分钟、吃 CPU,不该和 web 抢资源;
+  # 也因为它可以指向部署在别处(如 Vercel)的应用——只要 FACTORY_APP_URL 通。
+  bizbrain-worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    container_name: bizbrain-worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      # 同机部署就走内网,省一趟公网来回
+      - FACTORY_APP_URL=${FACTORY_APP_URL:-http://bizbrain-app:3031}
+      - DATA_DIR=/app/data
+    volumes:
+      - bizbrain-data:/app/data
+    depends_on:
+      - bizbrain-app
+    networks:
+      - bizbrain-network
+
+volumes:
+  bizbrain-pgdata:
+    name: bizbrain-pgdata
+  bizbrain-data:
+    name: bizbrain-data
+
+networks:
+  bizbrain-network:
+    name: bizbrain-network
+    driver: bridge
+  n8n_default:
+    external: true

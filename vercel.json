@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/pipeline/tick",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/pipeline/notes/daily",
+      "schedule": "0 13 * * *"
+    }
+  ]
+}
