@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { customTopic } from '@/lib/agents/custom-topic'
 
 export const dynamic = 'force-dynamic'
-// 深度检索(最多 8 次搜索)+ 抓来源正文,顶着函数上限给满
-export const maxDuration = 60
+// 深度检索 + 抓来源正文,实测 30-70 秒不等;付费计划给到 120 秒留足余量
+export const maxDuration = 120
 
 /** 自定义题材:老板描述想发什么 → 检索建题并入队。登录门禁在 middleware。 */
 export async function POST(req: NextRequest) {
