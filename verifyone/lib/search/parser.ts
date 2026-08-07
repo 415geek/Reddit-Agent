@@ -2,20 +2,15 @@ import type { NormalizedSearchInput, SearchInputType } from "@/lib/types";
 
 /**
  * Universal input parser: detects whether the user typed a phone number,
- * an email, or a US street address, and normalizes it.
+ * an email, a US street address, or a person/business name, and normalizes it.
  *
- * V1 intentionally rejects name-only queries — the UI explains why and
- * suggests searching by phone/email/address instead.
+ * Name search is supported but higher-risk for false matches, so the UI
+ * encourages adding a city/state and every result carries its confidence.
  */
 
 export interface ParseFailure {
   ok: false;
-  reason:
-    | "empty"
-    | "unsupported_name_search"
-    | "invalid_phone"
-    | "invalid_email"
-    | "unrecognized";
+  reason: "empty" | "invalid_phone" | "invalid_email" | "unrecognized";
   message: string;
 }
 
@@ -106,12 +101,19 @@ export function parseSearchInput(raw: string): ParseResult {
   const detected = detectInputType(value);
 
   if (detected === "name") {
-    return {
-      ok: false,
-      reason: "unsupported_name_search",
-      message:
-        "Name search is not supported yet — common names cause too many false matches. Try a phone number, email, or address instead.",
-    };
+    // "Jane Doe", "Jane Doe, San Francisco, CA" — pull optional city/state hints.
+    const parts = value.split(",").map((p) => p.trim()).filter(Boolean);
+    const details: Record<string, string> = {};
+    const tail = parts.slice(1).join(" ");
+    const stateCode = tail.toUpperCase().match(/\b([A-Z]{2})\b/)?.[1];
+    if (stateCode && US_STATES.has(stateCode)) details.state = stateCode;
+    const cityPart = parts[1]
+      ?.replace(/\b[A-Z]{2}\b/i, "")
+      .replace(/\b\d{5}(-\d{4})?\b/, "")
+      .trim();
+    if (cityPart) details.city = cityPart;
+    const name = (parts[0] ?? value).replace(/\s+/g, " ").trim();
+    return { ok: true, input: { type: "name", raw: value, normalized: name, details } };
   }
 
   if (detected === "phone") {

@@ -14,14 +14,20 @@ export const mockTrestle: DataProvider = {
   costCredits: 2,
 
   supports(inputType: SearchInputType): boolean {
-    return inputType === "phone" || inputType === "email" || inputType === "address";
+    return (
+      inputType === "phone" ||
+      inputType === "email" ||
+      inputType === "address" ||
+      inputType === "name"
+    );
   },
 
   async search(input: NormalizedSearchInput): Promise<NormalizedProviderResult> {
     const seed = hashCode(input.normalized);
     const first = FIRST_NAMES[seed % FIRST_NAMES.length]!;
     const last = LAST_NAMES[(seed >> 3) % LAST_NAMES.length]!;
-    const name = `${first} ${last}`;
+    // For a name search, echo what the user typed instead of a synthetic name.
+    const name = input.type === "name" ? input.normalized : `${first} ${last}`;
     const phone = input.type === "phone" ? input.normalized : `+1415555${String(1000 + (seed % 9000))}`;
     const email =
       input.type === "email"

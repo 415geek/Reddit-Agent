@@ -47,11 +47,15 @@ export const dataSf: DataProvider = {
   costCredits: 0,
 
   supports(inputType: SearchInputType): boolean {
-    return inputType === "address";
+    // Address: match by business address. Name: match by DBA / owner name.
+    return inputType === "address" || inputType === "name";
   },
 
   async search(input: NormalizedSearchInput): Promise<NormalizedProviderResult> {
-    if (!looksLikeSanFrancisco(input)) {
+    // For addresses, only bother when the address looks like SF (this is an SF
+    // dataset). Name searches always run — the full-text index covers owner
+    // and DBA names.
+    if (input.type === "address" && !looksLikeSanFrancisco(input)) {
       return { provider: this.name, status: "skipped" };
     }
 

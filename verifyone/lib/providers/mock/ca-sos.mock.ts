@@ -15,7 +15,12 @@ export const mockCaSos: DataProvider = {
   costCredits: 1,
 
   supports(inputType: SearchInputType): boolean {
-    return inputType === "address" || inputType === "phone" || inputType === "email";
+    return (
+      inputType === "address" ||
+      inputType === "phone" ||
+      inputType === "email" ||
+      inputType === "name"
+    );
   },
 
   async search(input: NormalizedSearchInput): Promise<NormalizedProviderResult> {

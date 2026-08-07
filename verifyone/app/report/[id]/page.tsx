@@ -1,13 +1,45 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { getReport } from "@/lib/store";
+import type { SearchReport } from "@/lib/types";
 import { ReportCard, ReportField, ConfidenceBadge } from "@/components/ReportField";
 
-export const dynamic = "force-dynamic";
-
 export default function ReportPage({ params }: { params: { id: string } }) {
-  const report = getReport(params.id);
-  if (!report) notFound();
+  // undefined = still loading from sessionStorage, null = not found
+  const [report, setReport] = useState<SearchReport | null | undefined>(undefined);
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(`verifyone:report:${params.id}`);
+      setReport(raw ? (JSON.parse(raw) as SearchReport) : null);
+    } catch {
+      setReport(null);
+    }
+  }, [params.id]);
+
+  if (report === undefined) {
+    return (
+      <div className="mx-auto max-w-3xl px-4 py-16 text-center text-neutral-400 text-sm">
+        Loading report…
+      </div>
+    );
+  }
+
+  if (report === null) {
+    return (
+      <div className="mx-auto max-w-3xl px-4 py-16 text-center">
+        <p className="text-neutral-700 font-medium">This report is no longer available.</p>
+        <p className="mt-2 text-sm text-neutral-500">
+          Reports are kept only in your browser for this session. Run the search again to
+          regenerate it.
+        </p>
+        <Link href="/" className="mt-4 inline-block text-sm text-brand hover:underline">
+          ← New search
+        </Link>
+      </div>
+    );
+  }
 
   const { profile, input } = report;
 
