@@ -29,7 +29,10 @@ export function RefillButton() {
       router.refresh()
       setTimeout(() => setNote(''), 5000)
     } catch {
-      setNote('网络出错,再点一次')
+      // 连接断了不代表白跑:服务端常常已经把题补进库了(实测:65 秒完成,
+      // 手机端 60 秒断开)。刷新一下把可能已入库的新题带出来,话也说实在点
+      router.refresh()
+      setNote('连接超时断开,但搜索可能已在后台完成——看看上面有没有新题,没有再点一次')
     } finally {
       setBusy(false)
     }

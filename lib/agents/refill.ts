@@ -43,7 +43,10 @@ export async function refillTopics(count = 4) {
       system: REFILL_SYSTEM,
       user: refillUser(count, recent.map((t) => t.title)),
       maxTokens: 8192,
-      maxSearches: 6,
+      // 6 轮检索 + 4 条选题各自抓正文,实测总时长 60-65 秒,正好骑在
+      // Vercel 函数上限上:有时被杀,有时做完了但手机端连接早断了,
+      // 两种结局用户看到的都是「网络出错」。降一轮检索,把时间还给抓正文
+      maxSearches: 5,
       mockKey: 'note.refill',
     })
     const picks: RefillPick[] = Array.isArray(raw) ? raw : Array.isArray(raw?.topics) ? raw.topics : []
@@ -72,8 +75,14 @@ export async function refillTopics(count = 4) {
       // 入池前先抓来源正文。搜索时模型读到的数字,核查阶段要在正文里重新找到
       // 才算数——三条补题选题连续死在这一点上:来源是报告的下载落地页,
       // 数字在 PDF 里、页面上没有,核查把全部关键数字判 unverified,必死。
-      // 抓不到正文的选题不进池:反正过不了核查,早拦省下后面三站的钱
-      const fullText = sourceItem?.rawText ?? (await fetchArticleText(p.source_url))
+      // 抓不到正文的选题不进池:反正过不了核查,早拦省下后面三站的钱。
+      // 每条限时 12 秒:慢站的三次重试最坏要 45 秒,四条选题串下来必超函数上限
+      const fullText =
+        sourceItem?.rawText ??
+        (await Promise.race([
+          fetchArticleText(p.source_url),
+          new Promise<null>((r) => setTimeout(() => r(null), 12_000)),
+        ]))
       if (!fullText) {
         skipped.push(`${p.title_top}:来源页抓不到正文(下载门/落地页/纯JS),核查必死,不入池`)
         continue
