@@ -44,3 +44,5 @@ OpenSanctions / CA SOS）由明确标注的 Mock 适配器代替；**DataSF（�
 - 风险信号只使用 “Potential public-record match requiring manual verification.” 措辞
 - 来源冲突时显示 “Multiple sources returned different information.”，绝不强行合并
 - 第三方 Key 仅存在于服务端；Mock 与生产数据严格隔离（live 模式缺 Key 直接启动失败）
+
+<!-- redeploy: VerifyOne serverless report fix + name search (34a938d) -->
