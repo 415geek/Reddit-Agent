@@ -7,6 +7,7 @@ import { mockOpenSanctions } from "@/lib/providers/mock/opensanctions.mock";
 import { mockCaSos } from "@/lib/providers/mock/ca-sos.mock";
 import { dataSf } from "@/lib/providers/datasf";
 import { trestle } from "@/lib/providers/trestle";
+import { peopleDataLabs } from "@/lib/providers/pdl";
 
 /**
  * Provider registry — the single place where vendors are wired in.
@@ -33,10 +34,11 @@ function buildRegistry(): DataProvider[] {
 
   // Live: enable each real adapter only when its key is configured.
   if (process.env.TRESTLE_API_KEY) providers.push(trestle);
+  if (process.env.PEOPLE_DATA_LABS_API_KEY) providers.push(peopleDataLabs);
 
-  // People Data Labs / RentCast / OpenSanctions / CA SOS live adapters are not
-  // wired yet. When their keys and adapters land, register them here. Until
-  // then they are absent from live reports — never mocked.
+  // RentCast / OpenSanctions / CA SOS live adapters are not wired yet. When
+  // their keys and adapters land, register them here. Until then they are
+  // absent from live reports — never mocked.
 
   return providers;
 }
