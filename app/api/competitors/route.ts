@@ -23,6 +23,8 @@ export async function GET(req: NextRequest) {
       competitorsMentioned: { isEmpty: false },
     },
     select: { competitorsMentioned: true, painPoints: true, buyingIntent: true, leadScore: true },
+    orderBy: { leadScore: 'desc' },
+    take: 2000,
   })
 
   const compMap: Record<string, { mentionCount: number; highIntentCount: number; painPoints: Record<string, number>; totalScore: number }> = {}

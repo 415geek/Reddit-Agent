@@ -1,7 +1,11 @@
 import { SignJWT, jwtVerify } from 'jose'
 import { cookies } from 'next/headers'
 
-const getSecret = () => new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-change-me')
+function getSecret() {
+  const secret = process.env.JWT_SECRET
+  if (!secret) throw new Error('JWT_SECRET environment variable is required')
+  return new TextEncoder().encode(secret)
+}
 
 export async function signToken(payload: Record<string, string>) {
   return new SignJWT(payload)

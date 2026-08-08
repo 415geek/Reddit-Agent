@@ -16,41 +16,45 @@ export async function GET(req: NextRequest) {
   const now = new Date()
   const since = getDateRange(range)
 
-  const [totalScanned, relevantPosts, highIntentLeads, cityRows, avgScoreResult] = await Promise.all([
+  const days = range === '24h' ? 1 : range === '7d' ? 7 : 30
+
+  const [totalScanned, relevantPosts, highIntentLeads, cityGroups, avgScoreResult, trendPosts] = await Promise.all([
     prisma.marketvoicePost.count({ where: { createdAt: { gte: since } } }),
     prisma.marketvoicePost.count({ where: { createdAt: { gte: since }, isRelevant: true } }),
     prisma.marketvoicePost.count({ where: { createdAt: { gte: since }, buyingIntent: 'high' } }),
-    prisma.marketvoicePost.findMany({
+    prisma.marketvoicePost.groupBy({
+      by: ['detectedCity'],
       where: { createdAt: { gte: since }, isRelevant: true, detectedCity: { not: null } },
-      select: { detectedCity: true, detectedState: true },
     }),
     prisma.marketvoicePost.aggregate({
       where: { createdAt: { gte: since }, isRelevant: true },
       _avg: { leadScore: true },
     }),
+    prisma.marketvoicePost.findMany({
+      where: { createdAt: { gte: since }, isRelevant: true },
+      select: { createdAt: true },
+    }),
   ])
 
-  const uniqueCities = new Set(cityRows.map(r => r.detectedCity).filter(Boolean))
+  const countByDay = new Map<string, number>()
+  for (const p of trendPosts) {
+    const day = p.createdAt.toISOString().split('T')[0]
+    countByDay.set(day, (countByDay.get(day) || 0) + 1)
+  }
 
-  // Trend data (daily counts for chart)
-  const days = range === '24h' ? 1 : range === '7d' ? 7 : 30
   const trendData = []
   for (let i = days - 1; i >= 0; i--) {
     const dayStart = new Date(now.getTime() - i * 24 * 60 * 60 * 1000)
     dayStart.setHours(0, 0, 0, 0)
-    const dayEnd = new Date(dayStart)
-    dayEnd.setHours(23, 59, 59, 999)
-    const count = await prisma.marketvoicePost.count({
-      where: { createdAt: { gte: dayStart, lte: dayEnd }, isRelevant: true },
-    })
-    trendData.push({ date: dayStart.toISOString().split('T')[0], count })
+    const dateStr = dayStart.toISOString().split('T')[0]
+    trendData.push({ date: dateStr, count: countByDay.get(dateStr) || 0 })
   }
 
   return NextResponse.json({
     totalPostsScanned: totalScanned,
     relevantPosts,
     highIntentLeads,
-    coveredCities: uniqueCities.size,
+    coveredCities: cityGroups.length,
     avgLeadScore: Math.round((avgScoreResult._avg.leadScore || 0) * 10) / 10,
     trendData,
   })

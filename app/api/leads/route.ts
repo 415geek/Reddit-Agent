@@ -22,8 +22,10 @@ export async function GET(req: NextRequest) {
   const minScore = parseInt(p.get('minScore') || '0')
   const topicCategory = p.get('topicCategory')
   const asianSignal = p.get('asianSignal')
-  const page = parseInt(p.get('page') || '1')
-  const limit = parseInt(p.get('limit') || '20')
+  const rawPage = parseInt(p.get('page') || '1')
+  const rawLimit = parseInt(p.get('limit') || '20')
+  const page = Number.isNaN(rawPage) || rawPage < 1 ? 1 : rawPage
+  const limit = Number.isNaN(rawLimit) ? 20 : Math.min(100, rawLimit)
 
   const since = getDateRange(range)
   const where: any = { createdAt: { gte: since }, isRelevant: true }

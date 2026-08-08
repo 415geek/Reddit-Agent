@@ -17,6 +17,8 @@ export async function GET(req: NextRequest) {
   const posts = await prisma.marketvoicePost.findMany({
     where: { createdAt: { gte: since }, isRelevant: true, detectedCity: { not: null } },
     select: { detectedCity: true, detectedState: true, leadScore: true, buyingIntent: true, painPoints: true },
+    orderBy: { leadScore: 'desc' },
+    take: 2000,
   })
 
   const cityMap: Record<string, { city: string; state: string; postCount: number; highIntentCount: number; totalScore: number; painPoints: Record<string, number> }> = {}

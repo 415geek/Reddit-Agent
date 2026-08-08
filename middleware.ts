@@ -7,13 +7,17 @@ const PUBLIC_PATHS = ['/login', '/api/auth/login', '/api/health']
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) return NextResponse.next()
+
+  const jwtSecret = process.env.JWT_SECRET
+  if (!jwtSecret) return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
+  const secret = new TextEncoder().encode(jwtSecret)
+
   if (pathname.startsWith('/api/')) {
     const auth = request.headers.get('authorization')
     if (!auth?.startsWith('Bearer ')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     try {
-      const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-change-me')
       await jwtVerify(auth.slice(7), secret)
       return NextResponse.next()
     } catch {
@@ -25,7 +29,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
   try {
-    const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-change-me')
     await jwtVerify(token, secret)
     return NextResponse.next()
   } catch {
