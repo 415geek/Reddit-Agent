@@ -1,0 +1,75 @@
+version: "3.9"
+
+services:
+  marketvoice-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: marketvoice-app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3031:3031"
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      - PORT=3031
+    depends_on:
+      marketvoice-postgres:
+        condition: service_healthy
+    networks:
+      - marketvoice-network
+      - n8n_default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.marketvoice.rule=Host(`voice.restaurantiq.ai`)"
+      - "traefik.http.routers.marketvoice.entrypoints=websecure"
+      - "traefik.http.routers.marketvoice.tls.certresolver=mytlschallenge"
+      - "traefik.http.services.marketvoice.loadbalancer.server.port=3031"
+      - "traefik.http.routers.marketvoice.service=marketvoice"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3031/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  marketvoice-postgres:
+    image: postgres:16-alpine
+    container_name: marketvoice-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: marketvoice
+      POSTGRES_USER: marketvoice_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME_PASSWORD}
+    volumes:
+      - marketvoice-pgdata:/var/lib/postgresql/data
+    networks:
+      - marketvoice-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketvoice_user -d marketvoice"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # PostgreSQL NOT exposed publicly — only accessible within network
+
+  marketvoice-redis:
+    image: redis:7-alpine
+    container_name: marketvoice-redis
+    restart: unless-stopped
+    volumes:
+      - marketvoice-redis-data:/data
+    networks:
+      - marketvoice-network
+
+volumes:
+  marketvoice-pgdata:
+    name: marketvoice-pgdata
+  marketvoice-redis-data:
+    name: marketvoice-redis-data
+
+networks:
+  marketvoice-network:
+    name: marketvoice-network
+    driver: bridge
+  n8n_default:
+    external: true
