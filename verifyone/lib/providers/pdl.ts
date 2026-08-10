@@ -87,13 +87,25 @@ export const peopleDataLabs: DataProvider = {
   async search(input: NormalizedSearchInput): Promise<NormalizedProviderResult> {
     const { apiKey, base, authHeader, minLikelihood } = cfg();
 
-    const params = new URLSearchParams({ min_likelihood: minLikelihood });
-    if (input.type === "email") params.set("email", input.normalized);
-    else if (input.type === "phone") params.set("phone", input.normalized);
-    else {
+    // PDL enrichment needs a minimum combination of identifiers. A bare name
+    // with no city/state doesn't qualify, so skip the call instead of wasting
+    // it on a guaranteed HTTP 400.
+    if (input.type === "name" && !input.details.city && !input.details.state) {
+      return { provider: this.name, status: "skipped" };
+    }
+
+    const params = new URLSearchParams();
+    if (input.type === "email") {
+      params.set("email", input.normalized);
+      params.set("min_likelihood", "2"); // exact identifier — low false-match risk
+    } else if (input.type === "phone") {
+      params.set("phone", input.normalized);
+      params.set("min_likelihood", "2");
+    } else {
       params.set("name", input.normalized);
       if (input.details.city) params.set("locality", input.details.city);
       if (input.details.state) params.set("region", input.details.state);
+      params.set("min_likelihood", minLikelihood);
     }
 
     try {
@@ -103,7 +115,11 @@ export const peopleDataLabs: DataProvider = {
         cache: "no-store",
       });
 
-      if (res.status === 404) return { provider: this.name, status: "no_match" };
+      // 404 = no confident match; 400 = inputs didn't meet PDL's minimum
+      // combination. Both mean "no usable result", not a provider failure.
+      if (res.status === 404 || res.status === 400) {
+        return { provider: this.name, status: "no_match" };
+      }
       if (!res.ok) {
         const detail = await res.text().catch(() => "");
         return {
