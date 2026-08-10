@@ -83,7 +83,12 @@ function formatAddress(a: z.infer<typeof addressSchema>): string | null {
 }
 
 async function call(url: string, headerName: string, apiKey: string): Promise<unknown> {
-  const res = await fetch(url, {
+  // Send the key both ways Trestle documents it — the x-api-key header AND the
+  // api_key query param — so auth can't fail on method choice. A wrong/inactive
+  // key still 403s (which then unambiguously points at the key, not the code).
+  const sep = url.includes("?") ? "&" : "?";
+  const authedUrl = `${url}${sep}api_key=${encodeURIComponent(apiKey)}`;
+  const res = await fetch(authedUrl, {
     headers: { [headerName]: apiKey, Accept: "application/json" },
     signal: AbortSignal.timeout(TIMEOUT_MS),
     cache: "no-store",
